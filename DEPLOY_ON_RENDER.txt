@@ -1,0 +1,23 @@
+ACADEMY TEST GENERATOR — RENDER TEST DEPLOYMENT
+
+This is a test deployment configuration for Render free web service.
+The free service uses temporary local storage. Database and uploaded PDFs may be lost after redeploy/restart/sleep. Do not use for important academy records until persistent database and file storage are configured.
+
+GitHub:
+1. Create a NEW PRIVATE repository.
+2. Extract this ZIP on your computer.
+3. Upload the CONTENTS of this folder to the repository root (app.py, requirements.txt, render.yaml, templates/, static/). Do not upload the ZIP file itself.
+
+Render:
+1. Sign in at https://render.com/ and connect GitHub.
+2. Choose New + > Blueprint, select this private repository, and apply.
+3. When prompted for ADMIN_EMAIL, enter your own private email.
+4. For ADMIN_PASSWORD, enter a unique strong password of at least 12 characters. Do not reuse your GitHub or email password.
+5. Wait for deploy to finish, then open the onrender.com URL.
+6. Sign in using the admin email/password you supplied. Change the password after first login if desired.
+7. To install on Android: open the HTTPS app URL in Chrome > menu > Install app / Add to Home screen.
+
+Security:
+- Never put admin credentials in GitHub files or share them with teachers.
+- Keep the repository private.
+- Do not enable public registration. Teacher accounts are created by the Main Admin only.
