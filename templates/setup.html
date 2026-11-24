@@ -1,0 +1,12 @@
+{% extends "base.html" %}{% block content %}
+<div class="card" style="max-width:460px;margin:2rem auto">
+<h1>First-Time Admin Setup</h1>
+<p>Create the <b>one and only</b> owner/admin account. This page locks forever once an admin exists. Keep these details private.</p>
+<form method="post">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<label>Your name</label><input name="name" value="Owner / Admin">
+<label>Admin email</label><input type="email" name="email" required>
+<label>Password (8+ characters)</label><input type="password" name="password" required>
+<label>Repeat password</label><input type="password" name="password2" required>
+<button type="submit">Create admin account</button>
+</form></div>{% endblock %}

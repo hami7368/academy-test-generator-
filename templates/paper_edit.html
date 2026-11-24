@@ -1,0 +1,23 @@
+{% extends "base.html" %}{% block content %}
+<h1>Edit Paper — {{ paper.title }}</h1>
+<div class="card"><form method="post">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="save">
+<label>Title</label><input name="title" value="{{ paper.title }}">
+<label>Instructions</label><textarea name="instructions">{{ paper.instructions }}</textarea>
+<label>Duration (minutes)</label><input type="number" name="duration_minutes" value="{{ paper.duration_minutes }}">
+<h2>Questions ({{ paper.questions|length }}) — Total {{ paper.total_marks }} marks</h2>
+{% for q in paper.questions %}
+<div class="qbox"><b>Q{{ loop.index }} — {{ q.qtype }} ({{ q.source }})</b>
+<textarea name="text_{{ loop.index0 }}">{{ q.text }}</textarea>
+<label>Marks: <input type="number" name="marks_{{ loop.index0 }}" value="{{ q.marks }}" style="width:90px"></label>
+</div>{% endfor %}
+<button type="submit">Save all changes</button> <a class="btn btn-light" href="/papers/{{ paper.id }}">Back to preview</a></form></div>
+<div class="card"><h2>Move / Remove / Replace</h2>
+{% for q in paper.questions %}
+<p>Q{{ loop.index }}: {{ q.text[:80] }}…
+<form method="post" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="move"><input type="hidden" name="idx" value="{{ loop.index0 }}"><input type="hidden" name="dir" value="-1"><button class="btn btn-light" style="padding:.2rem .5rem">↑ Up</button></form>
+<form method="post" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="move"><input type="hidden" name="idx" value="{{ loop.index0 }}"><input type="hidden" name="dir" value="1"><button class="btn btn-light" style="padding:.2rem .5rem">↓ Down</button></form>
+<form method="post" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="replace"><input type="hidden" name="idx" value="{{ loop.index0 }}"><button class="btn btn-secondary" style="padding:.2rem .5rem">Replace</button></form>
+<form method="post" style="display:inline" onsubmit="return confirm('Remove this question?')"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="remove"><input type="hidden" name="idx" value="{{ loop.index0 }}"><button class="btn btn-danger" style="padding:.2rem .5rem">Remove</button></form></p>
+{% endfor %}</div>
+{% endblock %}

@@ -1,0 +1,27 @@
+{% extends "base.html" %}{% block content %}
+<div class="card">
+<h1>{{ paper.title }} — Paper {{ paper.variant }}</h1>
+<p><b>{{ academy_name }}</b> · {{ paper.class_level.name if paper.class_level }} · {{ paper.subject.name if paper.subject }}<br>
+Date: {{ paper.paper_date }} · Time: {{ paper.duration_minutes }} minutes · Total Marks: {{ paper.total_marks }}</p>
+{% if paper.instructions %}<p><b>Instructions:</b> {{ paper.instructions }}</p>{% endif %}
+<p class="no-print">
+<a class="btn" href="/papers/{{ paper.id }}/pdf">Download PDF</a>
+<a class="btn btn-secondary" href="/papers/{{ paper.id }}/answer-key">Download Answer Key (PDF)</a>
+<a class="btn btn-secondary" href="/papers/{{ paper.id }}/edit">Edit Paper</a>
+<a class="btn btn-secondary" href="#" onclick="window.print();return false">Print</a>
+</p>
+<form method="post" action="/generator/variant/{{ paper.id }}" class="no-print" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<select name="variant" style="width:130px;display:inline-block"><option>B</option><option>C</option><option>A</option></select>
+<button class="btn btn-secondary" type="submit">Create variant (different questions)</button></form>
+<form method="post" action="/papers/{{ paper.id }}/duplicate" class="no-print" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-secondary" type="submit">Copy this paper</button></form>
+</div>
+{% set ns = namespace(n=0) %}
+{% for qtype in ['MCQ','Short','Long','Numerical'] %}
+{% set items = paper.questions | selectattr('qtype','equalto',qtype) | list %}
+{% if items %}<div class="card"><h2>{{ {'MCQ':'MCQs','Short':'Short Questions','Long':'Long Questions','Numerical':'Numericals'}[qtype] }}</h2>
+{% for q in items %}{% set ns.n = ns.n + 1 %}
+<div class="qbox"><b>Q{{ ns.n }}.</b> {{ q.text }} <b>[{{ q.marks }} marks]</b> <span class="muted">({{ q.source }} · {{ q.chapter }})</span>
+{% if q.options %}<ol type="A">{% for o in q.options %}<li>{{ o }}</li>{% endfor %}</ol>{% endif %}</div>
+{% endfor %}</div>{% endif %}{% endfor %}
+{% if not paper.questions %}<div class="card"><p class="muted">This paper has no questions.</p></div>{% endif %}
+{% endblock %}

@@ -1,0 +1,16 @@
+{% extends "base.html" %}{% block content %}
+<h1>Question Bank</h1>
+{% if current_user.is_admin %}<p><a class="btn" href="/questions/new">+ Add Question</a></p>{% endif %}
+<div class="card"><form method="get" class="row">
+<div><label>Class</label><select name="class_level_id"><option value="">All</option>{% for c in classes %}<option value="{{ c.id }}" {{ 'selected' if sel.cid==c.id }}>{{ c.name }}</option>{% endfor %}</select></div>
+<div><label>Type</label><select name="qtype"><option value="">All</option>{% for t in ['MCQ','Short','Long','Numerical'] %}<option {{ 'selected' if sel.qt==t }}>{{ t }}</option>{% endfor %}</select></div>
+<div><label>Source</label><select name="source"><option value="">All</option>{% for s in ['Theory','Exercise'] %}<option {{ 'selected' if sel.src==s }}>{{ s }}</option>{% endfor %}</select></div>
+<div><label>&nbsp;</label><button type="submit">Filter</button></div></form></div>
+<div class="card"><table><tr><th>Question</th><th>Class / Subject / Chapter</th><th>Type</th><th>Source</th><th>Level</th><th>Marks</th>{% if current_user.is_admin %}<th>Actions</th>{% endif %}</tr>
+{% for q in questions %}<tr><td>{{ q.text }}{% if q.qtype=='MCQ' %}<br><span class="muted">{% for o in q.options %}{{ 'ABCD'[loop.index0] }}) {{ o }} &nbsp;{% endfor %}<b>Answer: {{ q.correct_option }}</b></span>{% elif q.answer %}<br><span class="muted">Answer: {{ q.answer }}</span>{% endif %}</td>
+<td>{{ q.class_level.name }} · {{ q.subject.name }} · {{ q.chapter.name }}</td><td>{{ q.qtype }}</td><td>{{ q.source }}</td><td>{{ q.difficulty }}</td><td>{{ q.marks }}</td>
+{% if current_user.is_admin %}<td><a href="/questions/{{ q.id }}/edit">Edit</a>
+<form method="post" action="/questions/{{ q.id }}/delete" style="display:inline" onsubmit="return confirm('Delete this question?')"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-danger" style="padding:.2rem .5rem">Delete</button></form></td>{% endif %}</tr>
+{% else %}<tr><td colspan="7">No questions match.</td></tr>{% endfor %}</table>
+<p class="muted">Showing up to 300 questions — use the filters above.</p></div>
+{% endblock %}

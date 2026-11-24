@@ -1,0 +1,11 @@
+{% extends "base.html" %}{% block content %}
+<h1>Teacher Dashboard</h1><p class="muted">Welcome, {{ current_user.name }}</p>
+<div class="grid">
+<div class="stat"><b>{{ stats.papers }}</b>My Papers</div>
+<div class="stat"><b>{{ stats.questions }}</b>Questions in Bank</div>
+<div class="stat"><b>{{ stats.total_marks }}</b>Total Marks Set</div>
+</div>
+<p><a class="btn" href="/generator">+ Generate New Paper</a> <a class="btn btn-secondary" href="/history">My Paper History</a> <a class="btn btn-secondary" href="/questions">Browse Question Bank</a></p>
+<div class="card"><h2>My Recent Papers</h2>
+{% for p in papers %}<p><a href="/papers/{{ p.id }}">{{ p.title }}</a> — {{ p.class_level.name if p.class_level }} · {{ p.subject.name if p.subject }} · Paper {{ p.variant }} · {{ p.total_marks }} marks · {{ p.created_at.strftime('%d %b %Y') }}</p>{% else %}<p class="muted">No papers yet — generate your first paper.</p>{% endfor %}</div>
+{% endblock %}

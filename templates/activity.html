@@ -1,0 +1,5 @@
+{% extends "base.html" %}{% block content %}
+<h1>Teacher Activity</h1>
+<div class="card"><table><tr><th>When</th><th>User</th><th>Action</th><th>Detail</th></tr>
+{% for l in logs %}<tr><td>{{ l.created_at.strftime('%d %b %Y %H:%M') }}</td><td>{{ l.user.name if l.user }} ({{ l.user.email if l.user }})</td><td>{{ l.action }}</td><td>{{ l.detail }}</td></tr>{% else %}<tr><td colspan="4">No activity yet.</td></tr>{% endfor %}</table></div>
+{% endblock %}

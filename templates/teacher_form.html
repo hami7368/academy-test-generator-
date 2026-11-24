@@ -1,0 +1,15 @@
+{% extends "base.html" %}{% block content %}
+<h1>{{ 'Edit Teacher' if teacher else 'Add Teacher' }}</h1>
+<div class="card"><form method="post">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<label>Name</label><input name="name" value="{{ teacher.name if teacher }}" required>
+<label>Email</label><input type="email" name="email" value="{{ teacher.email if teacher }}" required>
+{% if not teacher %}<label>Temporary password (8+ characters) — share privately</label><input type="password" name="password" required>{% endif %}
+<button type="submit">Save</button> <a class="btn btn-light" href="/admin/teachers">Cancel</a></form></div>
+{% if teacher %}
+<div class="card"><h2>Reset Password</h2>
+<form method="post" action="/admin/teachers/{{ teacher.id }}/reset-password">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<label>New temporary password (8+ characters)</label><input type="password" name="password" required>
+<button type="submit">Reset password</button></form></div>{% endif %}
+{% endblock %}

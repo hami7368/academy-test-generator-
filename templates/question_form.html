@@ -1,0 +1,31 @@
+{% extends "base.html" %}{% block content %}
+<h1>{{ 'Edit Question' if q else 'Add Question' }}</h1>
+<div class="card"><form method="post">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<div class="row">
+<div><label>Class</label><select name="class_level_id" id="cls">{% for c in classes %}<option value="{{ c.id }}" {{ 'selected' if q and q.class_level_id==c.id }}>{{ c.name }}</option>{% endfor %}</select></div>
+<div><label>Subject</label><select name="subject_id" id="subj">{% for s in subjects %}<option value="{{ s.id }}" data-cls="{{ s.class_level_id }}" {{ 'selected' if q and q.subject_id==s.id }}>{{ s.name }}</option>{% endfor %}</select></div>
+<div><label>Chapter</label><select name="chapter_id" id="chap">{% for ch in chapters %}<option value="{{ ch.id }}" data-subj="{{ ch.subject_id }}" {{ 'selected' if q and q.chapter_id==ch.id }}>Ch {{ ch.number }}: {{ ch.name }}</option>{% endfor %}</select></div>
+</div>
+<div class="row">
+<div><label>Question type</label><select name="qtype" id="qtype">{% for t in ['MCQ','Short','Long','Numerical'] %}<option {{ 'selected' if q and q.qtype==t }}>{{ t }}</option>{% endfor %}</select></div>
+<div><label>Source — Theory or Exercise (required)</label><select name="source">{% for s in ['Theory','Exercise'] %}<option {{ 'selected' if q and q.source==s }}>{{ s }}</option>{% endfor %}</select></div>
+<div><label>Difficulty</label><select name="difficulty">{% for d in ['Easy','Medium','Hard'] %}<option {{ 'selected' if q and q.difficulty==d }}>{{ d }}</option>{% endfor %}</select></div>
+<div><label>Marks</label><input type="number" name="marks" value="{{ q.marks if q else 1 }}" min="1"></div>
+</div>
+<label>Question text</label><textarea name="text" required>{{ q.text if q }}</textarea>
+<div id="mcqbox"><label>MCQ options (A–D)</label>
+{% set opts = q.options if q and q.options else ['','','',''] %}
+{% for o in opts %}<input name="opt{{ loop.index }}" value="{{ o }}" placeholder="Option {{ 'ABCD'[loop.index0] }}" style="margin-bottom:.4rem">{% endfor %}
+<label>Correct option</label><select name="correct_option">{% for l in ['A','B','C','D'] %}<option {{ 'selected' if q and q.correct_option==l }}>{{ l }}</option>{% endfor %}</select></div>
+<label>Answer / solution</label><textarea name="answer">{{ q.answer if q }}</textarea>
+<button type="submit">Save question</button></form></div>
+<script>
+function filt(sel, attr, val){ [...sel.options].forEach(o=>{ o.hidden = val && o.dataset[attr]!=val; }); }
+const cls=document.getElementById('cls'), subj=document.getElementById('subj'), chap=document.getElementById('chap');
+function sync(){ filt(subj,'cls',cls.value); if(subj.selectedOptions[0]&&subj.selectedOptions[0].hidden) subj.selectedIndex=[...subj.options].findIndex(o=>!o.hidden); filt(chap,'subj',subj.value); if(chap.selectedOptions[0]&&chap.selectedOptions[0].hidden) chap.selectedIndex=[...chap.options].findIndex(o=>!o.hidden); }
+cls.onchange=sync; subj.onchange=sync; sync();
+const qt=document.getElementById('qtype');
+function syncMcq(){ document.getElementById('mcqbox').style.display = qt.value==='MCQ' ? 'block':'none'; }
+qt.onchange=syncMcq; syncMcq();
+</script>{% endblock %}

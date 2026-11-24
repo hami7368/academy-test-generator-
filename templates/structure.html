@@ -1,0 +1,17 @@
+{% extends "base.html" %}{% block content %}
+<h1>Classes, Subjects &amp; Chapters</h1>
+<div class="row">
+<div class="card"><h2>Add Class</h2><form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="kind" value="class"><label>Class name</label><input name="name" placeholder="e.g. Class 9th" required><button>Add class</button></form></div>
+<div class="card"><h2>Add Subject</h2><form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="kind" value="subject"><label>Class</label><select name="class_level_id">{% for c in classes %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}</select><label>Subject name</label><input name="name" placeholder="e.g. Physics" required><button>Add subject</button></form></div>
+<div class="card"><h2>Add Chapter</h2><form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="kind" value="chapter"><label>Subject</label><select name="subject_id">{% for c in classes %}{% for s in c.subjects %}<option value="{{ s.id }}">{{ c.name }} — {{ s.name }}</option>{% endfor %}{% endfor %}</select><label>Chapter number</label><input type="number" name="number" value="1"><label>Chapter name</label><input name="name" required><button>Add chapter</button></form></div>
+</div>
+{% for c in classes %}
+<div class="card"><h2>{{ c.name }}
+<form method="post" action="/admin/structure/delete/class/{{ c.id }}" style="display:inline" onsubmit="return confirm('Delete this class and its subjects/chapters?')"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-danger" style="padding:.2rem .5rem">Delete class</button></form></h2>
+{% for s in c.subjects %}
+<p><b>{{ s.name }}</b>
+<form method="post" action="/admin/structure/delete/subject/{{ s.id }}" style="display:inline" onsubmit="return confirm('Delete this subject?')"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-light" style="padding:.15rem .5rem">Delete</button></form></p>
+<ul>{% for ch in s.chapters|sort(attribute='number') %}<li>Ch {{ ch.number }}: {{ ch.name }}
+<form method="post" action="/admin/structure/delete/chapter/{{ ch.id }}" style="display:inline" onsubmit="return confirm('Delete this chapter?')"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-light" style="padding:.1rem .4rem">Delete</button></form></li>{% endfor %}</ul>
+{% endfor %}</div>{% endfor %}
+{% endblock %}

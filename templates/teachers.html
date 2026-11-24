@@ -1,0 +1,10 @@
+{% extends "base.html" %}{% block content %}
+<h1>Teachers</h1><p><a class="btn" href="/admin/teachers/new">+ Add Teacher</a></p>
+<div class="card"><table><tr><th>Name</th><th>Email</th><th>Status</th><th>Joined</th><th>Actions</th></tr>
+{% for t in teachers %}<tr><td>{{ t.name }}</td><td>{{ t.email }}</td><td>{{ 'Active' if t.is_active else 'Disabled' }}</td><td>{{ t.created_at.strftime('%d %b %Y') }}</td>
+<td><a href="/admin/teachers/{{ t.id }}/edit">Edit</a>
+<form method="post" action="/admin/teachers/{{ t.id }}/toggle" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-light" style="padding:.2rem .5rem">{{ 'Disable' if t.is_active else 'Enable' }}</button></form>
+<form method="post" action="/admin/teachers/{{ t.id }}/delete" style="display:inline" onsubmit="return confirm('Delete this teacher?')"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-danger" style="padding:.2rem .5rem">Delete</button></form></td></tr>
+{% else %}<tr><td colspan="5">No teachers yet.</td></tr>{% endfor %}</table></div>
+<p class="muted">To reset a teacher's password, open <b>Edit</b> — the reset form is on that page.</p>
+{% endblock %}

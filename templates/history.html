@@ -1,0 +1,14 @@
+{% extends "base.html" %}{% block content %}
+<h1>Paper History {% if current_user.is_admin %}(all teachers){% else %}(my papers){% endif %}</h1>
+<div class="card"><form method="get" class="row">
+<div><label>Search title</label><input name="q" value="{{ sel.q }}"></div>
+<div><label>Class</label><select name="class_level_id"><option value="">All</option>{% for c in classes %}<option value="{{ c.id }}" {{ 'selected' if sel.cid==c.id }}>{{ c.name }}</option>{% endfor %}</select></div>
+<div><label>Date</label><input type="date" name="date" value="{{ sel.d }}"></div>
+<div><label>&nbsp;</label><button type="submit">Filter</button></div></form></div>
+<div class="card"><table><tr><th>Title</th><th>Class / Subject</th><th>Variant</th><th>Marks</th><th>Date</th>{% if current_user.is_admin %}<th>Teacher</th>{% endif %}<th>Actions</th></tr>
+{% for p in papers %}<tr><td><a href="/papers/{{ p.id }}">{{ p.title }}</a></td><td>{{ p.class_level.name if p.class_level }} · {{ p.subject.name if p.subject }}</td><td>{{ p.variant }}</td><td>{{ p.total_marks }}</td><td>{{ p.paper_date }}</td>
+{% if current_user.is_admin %}<td>{{ p.teacher.name }}</td>{% endif %}
+<td><a href="/papers/{{ p.id }}/pdf">PDF</a> · <a href="/papers/{{ p.id }}/answer-key">Key</a>
+<form method="post" action="/papers/{{ p.id }}/duplicate" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-light" style="padding:.15rem .5rem">Copy</button></form></td></tr>
+{% else %}<tr><td colspan="7">No papers found.</td></tr>{% endfor %}</table></div>
+{% endblock %}

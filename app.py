@@ -1,342 +1,1070 @@
-
-import os, sqlite3, secrets
+"""
+Academy Test Generator — Flask app (Punjab Board, Pakistan).
+Roles: admin (owner, one account) and teacher (admin-created only).
+No public registration. All admin routes are server-enforced.
+Run locally:  pip install -r requirements.txt && python app.py
+Deploy: Render free web service + Neon free Postgres (see README.md).
+"""
+import os, json, random, io, secrets
+from datetime import date, datetime
 from functools import wraps
-from datetime import datetime
-from flask import Flask, render_template, request, redirect, url_for, session, flash, send_from_directory, abort
+
+from flask import (Flask, render_template, request, redirect, url_for, flash,
+                   send_file, send_from_directory, jsonify, abort, make_response)
+from flask_sqlalchemy import SQLAlchemy
+from flask_login import (LoginManager, UserMixin, login_user, logout_user,
+                         login_required, current_user)
+from flask_wtf import CSRFProtect
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
-BASE = os.path.dirname(os.path.abspath(__file__))
-DB = os.path.join(BASE, "academy.db")
-UPLOAD_DIR = os.path.join(BASE, "uploads")
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
+
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+UPLOAD_DIR = os.path.join(BASE_DIR, "instance", "uploads", "books")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
-app.config["MAX_CONTENT_LENGTH"] = 30 * 1024 * 1024
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+_db_url = os.environ.get("DATABASE_URL", "") or ""
+if _db_url.startswith("postgres://"):
+    _db_url = _db_url.replace("postgres://", "postgresql://", 1)
+app.config["SQLALCHEMY_DATABASE_URI"] = _db_url or "sqlite:///" + os.path.join(BASE_DIR, "instance", "academy.db")
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-app.config["SESSION_COOKIE_SECURE"] = os.environ.get("COOKIE_SECURE", "0") == "1"
-ALLOWED = {"pdf"}
+app.config["SESSION_COOKIE_SECURE"] = os.environ.get("SESSION_COOKIE_SECURE", "0") == "1"
+app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB PDF limit
+ACADEMY_NAME = os.environ.get("ACADEMY_NAME", "My Academy")
 
-def db():
-    con = sqlite3.connect(DB)
-    con.row_factory = sqlite3.Row
-    con.execute("PRAGMA foreign_keys = ON")
-    return con
+db = SQLAlchemy(app)
+login_manager = LoginManager(app)
+login_manager.login_view = "login"
+login_manager.login_message = "Please log in first."
+csrf = CSRFProtect(app)
+
+QTYPES = ["MCQ", "Short", "Long", "Numerical"]
+SOURCES = ["Theory", "Exercise"]
+DIFFICULTIES = ["Easy", "Medium", "Hard"]
+ALLOWED_EXT = {"pdf"}
+
+
+# ---------------- Models ----------------
+class User(UserMixin, db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False)
+    email = db.Column(db.String(160), unique=True, nullable=False, index=True)
+    password_hash = db.Column(db.String(256), nullable=False)
+    role = db.Column(db.String(20), nullable=False, default="teacher")  # admin|teacher
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def set_password(self, pw):
+        self.password_hash = generate_password_hash(pw)
+
+    def check_password(self, pw):
+        return check_password_hash(self.password_hash, pw)
+
+    @property
+    def is_admin(self):
+        return self.role == "admin"
+
+
+class ClassLevel(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(60), nullable=False, unique=True)
+    sort_order = db.Column(db.Integer, default=0)
+
+
+class Subject(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(80), nullable=False)
+    class_level_id = db.Column(db.Integer, db.ForeignKey("class_level.id"), nullable=False)
+    class_level = db.relationship("ClassLevel", backref=db.backref("subjects", cascade="all, delete-orphan", lazy="dynamic"))
+
+
+class Chapter(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(160), nullable=False)
+    number = db.Column(db.Integer, default=0)
+    subject_id = db.Column(db.Integer, db.ForeignKey("subject.id"), nullable=False)
+    subject = db.relationship("Subject", backref=db.backref("chapters", cascade="all, delete-orphan", lazy="dynamic"))
+
+
+class Book(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=False)
+    class_level_id = db.Column(db.Integer, db.ForeignKey("class_level.id"), nullable=False)
+    subject_id = db.Column(db.Integer, db.ForeignKey("subject.id"), nullable=False)
+    filename = db.Column(db.String(200))
+    original_filename = db.Column(db.String(200))
+    file_size = db.Column(db.Integer, default=0)
+    uploaded_at = db.Column(db.DateTime, default=datetime.utcnow)
+    class_level = db.relationship("ClassLevel")
+    subject = db.relationship("Subject")
+
+
+class Question(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    class_level_id = db.Column(db.Integer, db.ForeignKey("class_level.id"), nullable=False)
+    subject_id = db.Column(db.Integer, db.ForeignKey("subject.id"), nullable=False)
+    chapter_id = db.Column(db.Integer, db.ForeignKey("chapter.id"), nullable=False)
+    qtype = db.Column(db.String(20), nullable=False)       # MCQ/Short/Long/Numerical
+    source = db.Column(db.String(20), nullable=False)      # Theory/Exercise
+    text = db.Column(db.Text, nullable=False)
+    options_json = db.Column(db.Text)                       # JSON list of 4 options (MCQ)
+    correct_option = db.Column(db.String(5))
+    answer = db.Column(db.Text)
+    difficulty = db.Column(db.String(20), default="Medium")
+    marks = db.Column(db.Integer, default=1)
+    image_filename = db.Column(db.String(200))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    class_level = db.relationship("ClassLevel")
+    subject = db.relationship("Subject")
+    chapter = db.relationship("Chapter")
+
+    @property
+    def options(self):
+        try:
+            return json.loads(self.options_json) if self.options_json else []
+        except Exception:
+            return []
+
+
+class Paper(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=False)
+    teacher_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    class_level_id = db.Column(db.Integer, db.ForeignKey("class_level.id"))
+    subject_id = db.Column(db.Integer, db.ForeignKey("subject.id"))
+    variant = db.Column(db.String(5), default="A")
+    total_marks = db.Column(db.Integer, default=0)
+    duration_minutes = db.Column(db.Integer, default=60)
+    instructions = db.Column(db.Text)
+    paper_date = db.Column(db.String(20))
+    questions_json = db.Column(db.Text, nullable=False, default="[]")  # snapshot [{id,text,qtype,source,marks,options,correct_option,answer,chapter}]
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    teacher = db.relationship("User")
+    class_level = db.relationship("ClassLevel")
+    subject = db.relationship("Subject")
+
+    @property
+    def questions(self):
+        try:
+            return json.loads(self.questions_json or "[]")
+        except Exception:
+            return []
+
+
+class ActivityLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"))
+    action = db.Column(db.String(120), nullable=False)
+    detail = db.Column(db.String(400))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    user = db.relationship("User")
+
+
+@login_manager.user_loader
+def load_user(uid):
+    return db.session.get(User, int(uid))
+
+
+def log_activity(action, detail=""):
+    try:
+        db.session.add(ActivityLog(user_id=current_user.id if current_user.is_authenticated else None,
+                                   action=action, detail=detail or ""))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+
+# ---------------- Access control (server-enforced) ----------------
+def admin_required(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        if not current_user.is_authenticated:
+            return login_manager.unauthorized()
+        if not current_user.is_admin:
+            abort(403)
+        return f(*args, **kwargs)
+    return wrapper
+
+
+@app.errorhandler(403)
+def forbidden(e):
+    return render_template("403.html"), 403
+
+
+@app.errorhandler(404)
+def not_found(e):
+    return render_template("404.html"), 404
+
+
+def ensure_admin_from_env():
+    """Create the single owner admin from env vars, if set and no admin exists."""
+    email = (os.environ.get("ADMIN_EMAIL") or "").strip().lower()
+    pw = os.environ.get("ADMIN_PASSWORD") or ""
+    if not email or not pw:
+        return False
+    if User.query.filter_by(role="admin").first():
+        return False
+    if User.query.filter_by(email=email).first():
+        return False
+    u = User(name="Owner / Admin", email=email, role="admin", is_active=True)
+    u.set_password(pw)
+    db.session.add(u)
+    db.session.commit()
+    return True
+
 
 def init_db():
-    con = db()
-    con.executescript("""
-    CREATE TABLE IF NOT EXISTS users(
-      id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, email TEXT UNIQUE NOT NULL,
-      password TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('admin','teacher')),
-      active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS classes(
-      id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS subjects(
-      id INTEGER PRIMARY KEY AUTOINCREMENT, class_id INTEGER NOT NULL,
-      name TEXT NOT NULL, FOREIGN KEY(class_id) REFERENCES classes(id) ON DELETE CASCADE,
-      UNIQUE(class_id,name)
-    );
-    CREATE TABLE IF NOT EXISTS chapters(
-      id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id INTEGER NOT NULL,
-      name TEXT NOT NULL, FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
-      UNIQUE(subject_id,name)
-    );
-    CREATE TABLE IF NOT EXISTS books(
-      id INTEGER PRIMARY KEY AUTOINCREMENT, chapter_id INTEGER NOT NULL,
-      filename TEXT NOT NULL, original_name TEXT NOT NULL, uploaded_at TEXT NOT NULL,
-      FOREIGN KEY(chapter_id) REFERENCES chapters(id) ON DELETE CASCADE
-    );
-    CREATE TABLE IF NOT EXISTS questions(
-      id INTEGER PRIMARY KEY AUTOINCREMENT, chapter_id INTEGER NOT NULL,
-      qtype TEXT NOT NULL, source TEXT NOT NULL CHECK(source IN ('Theory','Exercise')),
-      difficulty TEXT NOT NULL, question TEXT NOT NULL, answer TEXT DEFAULT '',
-      marks INTEGER NOT NULL DEFAULT 1, created_by INTEGER,
-      created_at TEXT NOT NULL,
-      FOREIGN KEY(chapter_id) REFERENCES chapters(id) ON DELETE CASCADE,
-      FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL
-    );
-    CREATE TABLE IF NOT EXISTS papers(
-      id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, class_name TEXT NOT NULL,
-      subject_name TEXT NOT NULL, chapter_name TEXT NOT NULL, difficulty TEXT NOT NULL,
-      total_marks INTEGER NOT NULL, duration INTEGER NOT NULL, created_by INTEGER,
-      created_at TEXT NOT NULL,
-      FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL
-    );
-    CREATE TABLE IF NOT EXISTS paper_questions(
-      paper_id INTEGER NOT NULL, question_id INTEGER NOT NULL, order_no INTEGER NOT NULL,
-      FOREIGN KEY(paper_id) REFERENCES papers(id) ON DELETE CASCADE,
-      FOREIGN KEY(question_id) REFERENCES questions(id) ON DELETE CASCADE
-    );
-    """)
-    # Exactly one administrator is bootstrapped. Public registration is not provided.
-    if not con.execute("SELECT id FROM users WHERE role='admin' LIMIT 1").fetchone():
-        admin_email = os.environ.get("ADMIN_EMAIL", "admin@academy.local").strip().lower()
-        admin_password = os.environ.get("ADMIN_PASSWORD", "Admin@12345")
-        if len(admin_password) < 8:
-            raise RuntimeError("ADMIN_PASSWORD must be at least 8 characters")
-        con.execute("INSERT INTO users(name,email,password,role,active,created_at) VALUES(?,?,?,?,1,?)",
-                    ("Main Admin", admin_email, generate_password_hash(admin_password), "admin", datetime.now().isoformat(timespec="minutes")))
-    for cname in ["9th Class","10th Class","11th Class","12th Class"]:
-        con.execute("INSERT OR IGNORE INTO classes(name) VALUES(?)",(cname,))
-    con.commit()
-    con.close()
+    db.create_all()
+    ensure_admin_from_env()
+    try:
+        from seed import seed_all
+        seed_all(db, ClassLevel, Subject, Chapter, Question)
+    except Exception as e:
+        app.logger.warning("seed skipped: %s", e)
 
-init_db()
 
-def current_user():
-    if "uid" not in session: return None
-    con=db(); u=con.execute("SELECT * FROM users WHERE id=? AND active=1",(session["uid"],)).fetchone(); con.close()
-    return u
+with app.app_context():
+    init_db()
 
-def login_required(fn):
-    @wraps(fn)
-    def wrapper(*a,**kw):
-        if not current_user(): return redirect(url_for("login"))
-        return fn(*a,**kw)
-    return wrapper
 
-def admin_required(fn):
-    @wraps(fn)
-    def wrapper(*a,**kw):
-        u=current_user()
-        if not u: return redirect(url_for("login"))
-        if u["role"]!="admin": abort(403)
-        return fn(*a,**kw)
-    return wrapper
-
-@app.context_processor
-def inject_user():
-    return {"me": current_user()}
-
-@app.route("/service-worker.js")
-def service_worker():
-    response = send_from_directory(os.path.join(BASE, "static"), "sw.js", mimetype="application/javascript")
-    response.headers["Service-Worker-Allowed"] = "/"
-    response.headers["Cache-Control"] = "no-cache"
-    return response
-
+# ---------------- Public / auth ----------------
 @app.route("/")
-def home():
-    if current_user(): return redirect(url_for("dashboard"))
+def index():
+    if current_user.is_authenticated:
+        return redirect(url_for("dashboard"))
     return redirect(url_for("login"))
 
-@app.route("/login", methods=["GET","POST"])
+
+@app.route("/setup", methods=["GET", "POST"])
+def setup():
+    # One-time only: locked forever once an admin exists.
+    if User.query.filter_by(role="admin").first():
+        flash("Admin account already exists. Please log in.", "info")
+        return redirect(url_for("login"))
+    if request.method == "POST":
+        name = request.form.get("name", "").strip() or "Owner / Admin"
+        email = (request.form.get("email") or "").strip().lower()
+        pw = request.form.get("password") or ""
+        pw2 = request.form.get("password2") or ""
+        if "@" not in email or "." not in email:
+            flash("Enter a valid email address.", "error")
+        elif len(pw) < 8:
+            flash("Password must be at least 8 characters.", "error")
+        elif pw != pw2:
+            flash("Passwords do not match.", "error")
+        else:
+            u = User(name=name, email=email, role="admin", is_active=True)
+            u.set_password(pw)
+            db.session.add(u)
+            db.session.commit()
+            flash("Admin account created. Please log in.", "success")
+            return redirect(url_for("login"))
+    return render_template("setup.html")
+
+
+@app.route("/login", methods=["GET", "POST"])
 def login():
-    if request.method=="POST":
-        email=request.form.get("email","").strip().lower()
-        password=request.form.get("password","")
-        con=db(); u=con.execute("SELECT * FROM users WHERE email=?",(email,)).fetchone(); con.close()
-        if u and u["active"] and check_password_hash(u["password"],password):
-            session.clear(); session["uid"]=u["id"]
+    if current_user.is_authenticated:
+        return redirect(url_for("dashboard"))
+    if request.method == "POST":
+        email = (request.form.get("email") or "").strip().lower()
+        pw = request.form.get("password") or ""
+        u = User.query.filter_by(email=email).first()
+        if u and u.check_password(pw):
+            if not u.is_active:
+                flash("Your account has been disabled. Contact the admin.", "error")
+                return render_template("login.html")
+            login_user(u)
+            log_activity("login", u.email)
             return redirect(url_for("dashboard"))
-        flash("Email/password ghalat hai ya account inactive hai.","error")
+        flash("Invalid email or password.", "error")
     return render_template("login.html")
 
-@app.route("/logout")
-def logout():
-    session.clear(); return redirect(url_for("login"))
 
-@app.route("/account/password", methods=["GET", "POST"])
+@app.route("/logout")
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for("login"))
+
+
+@app.route("/change-password", methods=["GET", "POST"])
 @login_required
 def change_password():
     if request.method == "POST":
-        old = request.form.get("current_password", "")
-        new = request.form.get("new_password", "")
-        confirm = request.form.get("confirm_password", "")
-        con = db()
-        user = con.execute("SELECT * FROM users WHERE id=?", (session["uid"],)).fetchone()
-        if not user or not check_password_hash(user["password"], old):
-            flash("Current password ghalat hai.", "error")
-        elif len(new) < 10:
-            flash("Naya password kam az kam 10 characters ka rakhein.", "error")
-        elif new != confirm:
-            flash("New password aur confirmation match nahi karte.", "error")
+        cur = request.form.get("current") or ""
+        new = request.form.get("new") or ""
+        new2 = request.form.get("new2") or ""
+        if not current_user.check_password(cur):
+            flash("Current password is wrong.", "error")
+        elif len(new) < 8:
+            flash("New password must be at least 8 characters.", "error")
+        elif new != new2:
+            flash("New passwords do not match.", "error")
         else:
-            con.execute("UPDATE users SET password=? WHERE id=?", (generate_password_hash(new), session["uid"]))
-            con.commit()
-            session.clear()
-            con.close()
-            flash("Password update ho gaya. Naye password se dobara login karein.", "success")
-            return redirect(url_for("login"))
-        con.close()
-    return render_template("password.html")
+            current_user.set_password(new)
+            db.session.commit()
+            log_activity("password_changed", current_user.email)
+            flash("Password changed successfully.", "success")
+            return redirect(url_for("dashboard"))
+    return render_template("change_password.html")
 
+
+# ---------------- Dashboards ----------------
 @app.route("/dashboard")
 @login_required
 def dashboard():
-    con=db()
-    stats={
-      "users":con.execute("SELECT COUNT(*) n FROM users WHERE role='teacher' AND active=1").fetchone()["n"],
-      "classes":con.execute("SELECT COUNT(*) n FROM classes").fetchone()["n"],
-      "questions":con.execute("SELECT COUNT(*) n FROM questions").fetchone()["n"],
-      "papers":con.execute("SELECT COUNT(*) n FROM papers").fetchone()["n"]
-    }
-    recent=con.execute("""SELECT p.*,u.name creator FROM papers p LEFT JOIN users u ON p.created_by=u.id ORDER BY p.id DESC LIMIT 8""").fetchall()
-    con.close()
-    return render_template("dashboard.html",stats=stats,recent=recent)
+    if current_user.is_admin:
+        stats = dict(teachers=User.query.filter_by(role="teacher").count(),
+                     questions=Question.query.count(),
+                     papers=Paper.query.count(),
+                     books=Book.query.count(),
+                     classes=ClassLevel.query.count())
+        recent_papers = Paper.query.order_by(Paper.created_at.desc()).limit(8).all()
+        recent_logs = ActivityLog.query.order_by(ActivityLog.created_at.desc()).limit(10).all()
+        return render_template("dashboard_admin.html", stats=stats,
+                               recent_papers=recent_papers, recent_logs=recent_logs)
+    my_papers = Paper.query.filter_by(teacher_id=current_user.id).order_by(Paper.created_at.desc()).all()
+    stats = dict(papers=len(my_papers),
+                 questions=Question.query.count(),
+                 total_marks=sum(p.total_marks for p in my_papers))
+    return render_template("dashboard_teacher.html", stats=stats, papers=my_papers[:8])
 
-@app.route("/users", methods=["GET","POST"])
+
+@app.route("/manifest.json")
+def manifest():
+    return send_from_directory(os.path.join(BASE_DIR, "static"), "manifest.json",
+                               mimetype="application/manifest+json")
+
+
+@app.route("/sw.js")
+def sw():
+    return send_from_directory(os.path.join(BASE_DIR, "static"), "sw.js",
+                               mimetype="application/javascript")
+
+
+@app.route("/offline")
+def offline():
+    return render_template("offline.html")
+
+
+# ---------------- Admin: teachers ----------------
+@app.route("/admin/teachers")
+@login_required
 @admin_required
-def users():
-    con=db()
-    if request.method=="POST":
-        name=request.form.get("name","").strip(); email=request.form.get("email","").strip().lower()
-        password=request.form.get("password","")
-        if not name or not email or len(password)<8:
-            flash("Name/email zaroori hain aur password kam az kam 8 characters ka ho.","error")
-        else:
-            try:
-                con.execute("INSERT INTO users(name,email,password,role,active,created_at) VALUES(?,?,?,'teacher',1,?)",
-                    (name,email,generate_password_hash(password),datetime.now().isoformat(timespec="minutes")))
-                con.commit(); flash("Teacher account create ho gaya. Login details teacher ko securely share karein.","success")
-            except sqlite3.IntegrityError: flash("Is email ka account pehle se mojood hai.","error")
-    rows=con.execute("SELECT id,name,email,active,created_at FROM users WHERE role='teacher' ORDER BY id DESC").fetchall()
-    con.close(); return render_template("users.html",users=rows)
+def admin_teachers():
+    teachers = User.query.filter_by(role="teacher").order_by(User.created_at.desc()).all()
+    return render_template("teachers.html", teachers=teachers)
 
-@app.route("/users/<int:uid>/toggle",methods=["POST"])
+
+@app.route("/admin/teachers/new", methods=["GET", "POST"])
+@login_required
 @admin_required
-def toggle_user(uid):
-    con=db(); con.execute("UPDATE users SET active=CASE active WHEN 1 THEN 0 ELSE 1 END WHERE id=? AND role='teacher'",(uid,)); con.commit(); con.close()
-    flash("Account status update ho gaya.","success"); return redirect(url_for("users"))
-
-@app.route("/library",methods=["GET","POST"])
-@login_required
-def library():
-    con=db()
-    if request.method=="POST":
-        action=request.form.get("action")
-        try:
-            if action=="class":
-                con.execute("INSERT INTO classes(name) VALUES(?)",(request.form["name"].strip(),))
-            elif action=="subject":
-                con.execute("INSERT INTO subjects(class_id,name) VALUES(?,?)",(request.form["class_id"],request.form["name"].strip()))
-            elif action=="chapter":
-                con.execute("INSERT INTO chapters(subject_id,name) VALUES(?,?)",(request.form["subject_id"],request.form["name"].strip()))
-            con.commit(); flash("Syllabus item add ho gaya.","success")
-        except sqlite3.IntegrityError: flash("Ye item pehle se mojood hai.","error")
-    classes=con.execute("SELECT * FROM classes ORDER BY name").fetchall()
-    subjects=con.execute("SELECT s.*,c.name class_name FROM subjects s JOIN classes c ON c.id=s.class_id ORDER BY c.name,s.name").fetchall()
-    chapters=con.execute("SELECT ch.*,s.name subject_name,c.name class_name FROM chapters ch JOIN subjects s ON s.id=ch.subject_id JOIN classes c ON c.id=s.class_id ORDER BY c.name,s.name,ch.name").fetchall()
-    con.close(); return render_template("library.html",classes=classes,subjects=subjects,chapters=chapters)
-
-@app.route("/books",methods=["GET","POST"])
-@login_required
-def books():
-    con=db()
-    if request.method=="POST":
-        f=request.files.get("book"); cid=request.form.get("chapter_id")
-        if not f or not f.filename:
-            flash("PDF file select karein.","error")
-        elif not f.filename.lower().endswith(".pdf"):
-            flash("Sirf PDF files allowed hain.","error")
+def admin_teacher_new():
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        email = (request.form.get("email") or "").strip().lower()
+        pw = request.form.get("password") or ""
+        if not name or "@" not in email or len(pw) < 8:
+            flash("Name, valid email and a password of 8+ characters are required.", "error")
+        elif User.query.filter_by(email=email).first():
+            flash("That email is already registered.", "error")
         else:
-            safe=secure_filename(f.filename)
-            stored=secrets.token_hex(8)+"_"+safe
-            f.save(os.path.join(UPLOAD_DIR,stored))
-            con.execute("INSERT INTO books(chapter_id,filename,original_name,uploaded_at) VALUES(?,?,?,?)",
-                (cid,stored,f.filename,datetime.now().isoformat(timespec="minutes")))
-            con.commit(); flash("Book PDF upload ho gayi. Abhi PDF storage ke liye hai; automatic AI extraction next integration stage hai.","success")
-    rows=con.execute("""SELECT b.*,ch.name chapter_name,s.name subject_name,c.name class_name
-      FROM books b JOIN chapters ch ON ch.id=b.chapter_id JOIN subjects s ON s.id=ch.subject_id
-      JOIN classes c ON c.id=s.class_id ORDER BY b.id DESC""").fetchall()
-    chapters=con.execute("""SELECT ch.id,ch.name,s.name subject_name,c.name class_name FROM chapters ch
-      JOIN subjects s ON s.id=ch.subject_id JOIN classes c ON c.id=s.class_id ORDER BY c.name,s.name,ch.name""").fetchall()
-    con.close(); return render_template("books.html",books=rows,chapters=chapters)
+            u = User(name=name, email=email, role="teacher", is_active=True)
+            u.set_password(pw)
+            db.session.add(u)
+            db.session.commit()
+            log_activity("teacher_created", email)
+            flash(f"Teacher {name} created. Share the login privately.", "success")
+            return redirect(url_for("admin_teachers"))
+    return render_template("teacher_form.html", teacher=None)
 
-@app.route("/books/<int:bid>")
-@login_required
-def download_book(bid):
-    con=db(); row=con.execute("SELECT * FROM books WHERE id=?",(bid,)).fetchone(); con.close()
-    if not row: abort(404)
-    return send_from_directory(UPLOAD_DIR,row["filename"],as_attachment=True,download_name=row["original_name"])
 
-@app.route("/questions",methods=["GET","POST"])
+@app.route("/admin/teachers/<int:uid>/edit", methods=["GET", "POST"])
 @login_required
-def questions():
-    con=db()
-    if request.method=="POST":
-        q=request.form.get("question","").strip()
-        if q:
-            con.execute("""INSERT INTO questions(chapter_id,qtype,source,difficulty,question,answer,marks,created_by,created_at)
-              VALUES(?,?,?,?,?,?,?,?,?)""",(request.form["chapter_id"],request.form["qtype"],request.form["source"],
-              request.form["difficulty"],q,request.form.get("answer","").strip(),int(request.form.get("marks",1)),session["uid"],
-              datetime.now().isoformat(timespec="minutes")))
-            con.commit(); flash("Question bank mein question add ho gaya.","success")
-    chapters=con.execute("""SELECT ch.id,ch.name chapter_name,s.name subject_name,c.name class_name FROM chapters ch
-      JOIN subjects s ON s.id=ch.subject_id JOIN classes c ON c.id=s.class_id ORDER BY c.name,s.name,ch.name""").fetchall()
-    rows=con.execute("""SELECT q.*,ch.name chapter_name,s.name subject_name,c.name class_name FROM questions q
-      JOIN chapters ch ON ch.id=q.chapter_id JOIN subjects s ON s.id=ch.subject_id JOIN classes c ON c.id=s.class_id
-      ORDER BY q.id DESC LIMIT 100""").fetchall()
-    con.close(); return render_template("questions.html",chapters=chapters,questions=rows)
+@admin_required
+def admin_teacher_edit(uid):
+    t = db.session.get(User, uid)
+    if not t or t.role != "teacher":
+        abort(404)
+    if request.method == "POST":
+        t.name = request.form.get("name", "").strip() or t.name
+        new_email = (request.form.get("email") or "").strip().lower()
+        if new_email and new_email != t.email:
+            if User.query.filter_by(email=new_email).first():
+                flash("That email is already in use.", "error")
+                return render_template("teacher_form.html", teacher=t)
+            t.email = new_email
+        db.session.commit()
+        log_activity("teacher_edited", t.email)
+        flash("Teacher updated.", "success")
+        return redirect(url_for("admin_teachers"))
+    return render_template("teacher_form.html", teacher=t)
 
-@app.route("/questions/<int:qid>/delete",methods=["POST"])
-@login_required
-def delete_question(qid):
-    con=db(); con.execute("DELETE FROM questions WHERE id=?",(qid,)); con.commit(); con.close()
-    flash("Question delete ho gaya.","success"); return redirect(url_for("questions"))
 
-@app.route("/generate",methods=["GET","POST"])
+@app.route("/admin/teachers/<int:uid>/toggle", methods=["POST"])
 @login_required
-def generate():
-    con=db()
-    chapters=con.execute("""SELECT ch.id,ch.name chapter_name,s.name subject_name,c.name class_name FROM chapters ch
-      JOIN subjects s ON s.id=ch.subject_id JOIN classes c ON c.id=s.class_id ORDER BY c.name,s.name,ch.name""").fetchall()
-    paper=None; selected=[]
-    if request.method=="POST":
-        cid=int(request.form["chapter_id"]); difficulty=request.form.get("difficulty","Mixed")
-        groups=[
-          ("MCQ","mcq_theory","mcq_exercise"),
-          ("Short","short_theory","short_exercise"),
-          ("Long","long_theory","long_exercise"),
-          ("Numerical","num_theory","num_exercise")]
-        chosen=[]
-        for qtype,tid,eid in groups:
-            for source,field in [("Theory",tid),("Exercise",eid)]:
-                qty=max(0,min(100,int(request.form.get(field,0) or 0)))
-                if qty:
-                    sql="SELECT * FROM questions WHERE chapter_id=? AND qtype=? AND source=?"
-                    args=[cid,qtype,source]
-                    if difficulty!="Mixed": sql+=" AND difficulty=?"; args.append(difficulty)
-                    found=con.execute(sql+" ORDER BY RANDOM() LIMIT ?",(*args,qty)).fetchall()
-                    if len(found)<qty:
-                        flash(f"{qtype} ({source}) ke liye sirf {len(found)} questions available hain; {qty} required thay.","error")
-                    chosen.extend(found)
-        if chosen:
-            ch=con.execute("""SELECT ch.name chapter_name,s.name subject_name,c.name class_name FROM chapters ch
-              JOIN subjects s ON s.id=ch.subject_id JOIN classes c ON c.id=s.class_id WHERE ch.id=?""",(cid,)).fetchone()
-            marks=sum(q["marks"] for q in chosen)
-            title=request.form.get("title","").strip() or f"{ch['subject_name']} Chapter Test"
-            cur=con.execute("""INSERT INTO papers(title,class_name,subject_name,chapter_name,difficulty,total_marks,duration,created_by,created_at)
-              VALUES(?,?,?,?,?,?,?,?,?)""",(title,ch["class_name"],ch["subject_name"],ch["chapter_name"],difficulty,marks,
-              int(request.form.get("duration",60)),session["uid"],datetime.now().isoformat(timespec="minutes")))
-            pid=cur.lastrowid
-            for i,q in enumerate(chosen,1): con.execute("INSERT INTO paper_questions VALUES(?,?,?)",(pid,q["id"],i))
-            con.commit()
-            return redirect(url_for("paper",pid=pid))
-    con.close()
-    return render_template("generate.html",chapters=chapters)
+@admin_required
+def admin_teacher_toggle(uid):
+    t = db.session.get(User, uid)
+    if not t or t.role != "teacher":
+        abort(404)
+    t.is_active = not t.is_active
+    db.session.commit()
+    log_activity("teacher_disabled" if not t.is_active else "teacher_enabled", t.email)
+    flash(f"{t.name} {'disabled' if not t.is_active else 'enabled'}.", "success")
+    return redirect(url_for("admin_teachers"))
 
-@app.route("/paper/<int:pid>")
+
+@app.route("/admin/teachers/<int:uid>/reset-password", methods=["POST"])
 @login_required
-def paper(pid):
-    con=db()
-    p=con.execute("SELECT * FROM papers WHERE id=?",(pid,)).fetchone()
-    if not p: abort(404)
-    qs=con.execute("""SELECT q.* FROM paper_questions pq JOIN questions q ON q.id=pq.question_id
-      WHERE pq.paper_id=? ORDER BY pq.order_no""",(pid,)).fetchall()
-    con.close(); return render_template("paper.html",paper=p,questions=qs)
+@admin_required
+def admin_teacher_reset(uid):
+    t = db.session.get(User, uid)
+    if not t or t.role != "teacher":
+        abort(404)
+    pw = request.form.get("password") or ""
+    if len(pw) < 8:
+        flash("New password must be at least 8 characters.", "error")
+    else:
+        t.set_password(pw)
+        db.session.commit()
+        log_activity("teacher_password_reset", t.email)
+        flash(f"Password reset for {t.name}. Share it privately.", "success")
+    return redirect(url_for("admin_teachers"))
+
+
+@app.route("/admin/teachers/<int:uid>/delete", methods=["POST"])
+@login_required
+@admin_required
+def admin_teacher_delete(uid):
+    t = db.session.get(User, uid)
+    if not t or t.role != "teacher":
+        abort(404)
+    db.session.delete(t)
+    db.session.commit()
+    log_activity("teacher_deleted", t.email)
+    flash("Teacher deleted.", "success")
+    return redirect(url_for("admin_teachers"))
+
+
+@app.route("/admin/activity")
+@login_required
+@admin_required
+def admin_activity():
+    logs = ActivityLog.query.order_by(ActivityLog.created_at.desc()).limit(200).all()
+    return render_template("activity.html", logs=logs)
+
+
+@app.route("/admin/settings")
+@login_required
+@admin_required
+def admin_settings():
+    ai_configured = bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("OPENAI_API_KEY"))
+    return render_template("settings.html", academy_name=ACADEMY_NAME,
+                           ai_configured=ai_configured)
+
+
+# ---------------- Admin: classes / subjects / chapters ----------------
+@app.route("/admin/structure", methods=["GET", "POST"])
+@login_required
+@admin_required
+def admin_structure():
+    if request.method == "POST":
+        kind = request.form.get("kind")
+        if kind == "class":
+            name = request.form.get("name", "").strip()
+            if name and not ClassLevel.query.filter_by(name=name).first():
+                db.session.add(ClassLevel(name=name, sort_order=ClassLevel.query.count() + 1))
+                db.session.commit()
+                flash("Class added.", "success")
+        elif kind == "subject":
+            name = request.form.get("name", "").strip()
+            cid = request.form.get("class_level_id", type=int)
+            if name and cid:
+                db.session.add(Subject(name=name, class_level_id=cid))
+                db.session.commit()
+                flash("Subject added.", "success")
+        elif kind == "chapter":
+            name = request.form.get("name", "").strip()
+            sid = request.form.get("subject_id", type=int)
+            num = request.form.get("number", type=int) or 0
+            if name and sid:
+                db.session.add(Chapter(name=name, number=num, subject_id=sid))
+                db.session.commit()
+                flash("Chapter added.", "success")
+        return redirect(url_for("admin_structure"))
+    classes = ClassLevel.query.order_by(ClassLevel.sort_order).all()
+    return render_template("structure.html", classes=classes)
+
+
+@app.route("/admin/structure/delete/<kind>/<int:oid>", methods=["POST"])
+@login_required
+@admin_required
+def admin_structure_delete(kind, oid):
+    obj = None
+    if kind == "class":
+        obj = db.session.get(ClassLevel, oid)
+    elif kind == "subject":
+        obj = db.session.get(Subject, oid)
+    elif kind == "chapter":
+        obj = db.session.get(Chapter, oid)
+    if not obj:
+        abort(404)
+    db.session.delete(obj)
+    db.session.commit()
+    flash("Deleted.", "success")
+    return redirect(url_for("admin_structure"))
+
+
+# ---------------- Admin: books ----------------
+@app.route("/admin/books", methods=["GET", "POST"])
+@login_required
+@admin_required
+def admin_books():
+    if request.method == "POST":
+        title = request.form.get("title", "").strip()
+        cid = request.form.get("class_level_id", type=int)
+        sid = request.form.get("subject_id", type=int)
+        f = request.files.get("pdf")
+        if not title or not cid or not sid:
+            flash("Title, class and subject are required.", "error")
+        elif not f or not f.filename.lower().endswith(".pdf"):
+            flash("Please upload a PDF file.", "error")
+        else:
+            fname = secure_filename(f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{f.filename}")
+            path = os.path.join(UPLOAD_DIR, fname)
+            f.save(path)
+            db.session.add(Book(title=title, class_level_id=cid, subject_id=sid,
+                                filename=fname, original_filename=f.filename,
+                                file_size=os.path.getsize(path)))
+            db.session.commit()
+            log_activity("book_uploaded", title)
+            flash("Book uploaded.", "success")
+        return redirect(url_for("admin_books"))
+    books = Book.query.order_by(Book.uploaded_at.desc()).all()
+    classes = ClassLevel.query.order_by(ClassLevel.sort_order).all()
+    return render_template("books.html", books=books, classes=classes)
+
+
+@app.route("/admin/books/<int:bid>/download")
+@login_required
+@admin_required
+def admin_book_download(bid):
+    b = db.session.get(Book, bid) or abort(404)
+    return send_from_directory(UPLOAD_DIR, b.filename, as_attachment=True,
+                               download_name=b.original_filename)
+
+
+@app.route("/admin/books/<int:bid>/delete", methods=["POST"])
+@login_required
+@admin_required
+def admin_book_delete(bid):
+    b = db.session.get(Book, bid) or abort(404)
+    try:
+        os.remove(os.path.join(UPLOAD_DIR, b.filename))
+    except OSError:
+        pass
+    db.session.delete(b)
+    db.session.commit()
+    flash("Book deleted. Note: on free hosting, uploaded files are not permanent — see README.", "info")
+    return redirect(url_for("admin_books"))
+
+
+# ---------------- Questions (admin manage; teachers read via generator) ----------------
+@app.route("/questions")
+@login_required
+def list_questions():
+    q = Question.query
+    cid = request.args.get("class_level_id", type=int)
+    sid = request.args.get("subject_id", type=int)
+    chid = request.args.get("chapter_id", type=int)
+    qt = request.args.get("qtype")
+    src = request.args.get("source")
+    if cid: q = q.filter_by(class_level_id=cid)
+    if sid: q = q.filter_by(subject_id=sid)
+    if chid: q = q.filter_by(chapter_id=chid)
+    if qt in QTYPES: q = q.filter_by(qtype=qt)
+    if src in SOURCES: q = q.filter_by(source=src)
+    questions = q.order_by(Question.created_at.desc()).limit(300).all()
+    classes = ClassLevel.query.order_by(ClassLevel.sort_order).all()
+    subjects = Subject.query.all()
+    chapters = Chapter.query.all()
+    return render_template("questions.html", questions=questions, classes=classes,
+                           subjects=subjects, chapters=chapters,
+                           sel=dict(cid=cid, sid=sid, chid=chid, qt=qt, src=src))
+
+
+@app.route("/questions/new", methods=["GET", "POST"])
+@login_required
+@admin_required
+def question_new():
+    if request.method == "POST":
+        err = _save_question(None, request.form)
+        if err:
+            flash(err, "error")
+        else:
+            flash("Question added.", "success")
+            return redirect(url_for("list_questions"))
+    classes = ClassLevel.query.order_by(ClassLevel.sort_order).all()
+    return render_template("question_form.html", q=None, classes=classes,
+                           subjects=Subject.query.all(), chapters=Chapter.query.all())
+
+
+@app.route("/questions/<int:qid>/edit", methods=["GET", "POST"])
+@login_required
+@admin_required
+def question_edit(qid):
+    q = db.session.get(Question, qid) or abort(404)
+    if request.method == "POST":
+        err = _save_question(q, request.form)
+        if err:
+            flash(err, "error")
+        else:
+            flash("Question updated.", "success")
+            return redirect(url_for("list_questions"))
+    classes = ClassLevel.query.order_by(ClassLevel.sort_order).all()
+    return render_template("question_form.html", q=q, classes=classes,
+                           subjects=Subject.query.all(), chapters=Chapter.query.all())
+
+
+def _save_question(q, form):
+    cid = form.get("class_level_id", type=int)
+    sid = form.get("subject_id", type=int)
+    chid = form.get("chapter_id", type=int)
+    qtype = form.get("qtype")
+    source = form.get("source")
+    text = (form.get("text") or "").strip()
+    difficulty = form.get("difficulty") or "Medium"
+    marks = form.get("marks", type=int) or 1
+    if not (cid and sid and chid and text):
+        return "Class, subject, chapter and question text are required."
+    if qtype not in QTYPES or source not in SOURCES:
+        return "Choose a valid question type and source (Theory / Exercise)."
+    if q is None:
+        q = Question()
+        db.session.add(q)
+    q.class_level_id, q.subject_id, q.chapter_id = cid, sid, chid
+    q.qtype, q.source, q.text = qtype, source, text
+    q.difficulty, q.marks = difficulty, marks
+    q.answer = (form.get("answer") or "").strip()
+    if qtype == "MCQ":
+        opts = [(form.get(f"opt{i}") or "").strip() for i in range(1, 5)]
+        if any(not o for o in opts):
+            return "MCQs need all 4 options (A–D)."
+        q.options_json = json.dumps(opts)
+        q.correct_option = form.get("correct_option") or "A"
+    else:
+        q.options_json, q.correct_option = None, None
+    db.session.commit()
+    return None
+
+
+@app.route("/questions/<int:qid>/delete", methods=["POST"])
+@login_required
+@admin_required
+def question_delete(qid):
+    q = db.session.get(Question, qid) or abort(404)
+    db.session.delete(q)
+    db.session.commit()
+    flash("Question deleted.", "success")
+    return redirect(url_for("list_questions"))
+
+
+@app.route("/api/subjects/<int:cid>")
+@login_required
+def api_subjects(cid):
+    return jsonify([{"id": s.id, "name": s.name}
+                    for s in Subject.query.filter_by(class_level_id=cid).all()])
+
+
+@app.route("/api/chapters/<int:sid>")
+@login_required
+def api_chapters(sid):
+    return jsonify([{"id": c.id, "name": c.name, "number": c.number}
+                    for c in Chapter.query.filter_by(subject_id=sid).order_by(Chapter.number).all()])
+
+
+# ---------------- Paper generator ----------------
+TYPE_MARKS_DEFAULT = {"MCQ": 1, "Short": 2, "Long": 5, "Numerical": 4}
+TYPE_LABEL = {"MCQ": "MCQs", "Short": "Short Questions", "Long": "Long Questions",
+              "Numerical": "Numericals"}
+QTY_FIELDS = [("MCQ", "mcq_theory", "mcq_exercise"),
+              ("Short", "short_theory", "short_exercise"),
+              ("Long", "long_theory", "long_exercise"),
+              ("Numerical", "num_theory", "num_exercise")]
+
+
+def _chapter_ids_for_scope(scope, subject_id, chapter_ids):
+    all_ch = Chapter.query.filter_by(subject_id=subject_id).order_by(Chapter.number).all()
+    if scope == "full":
+        return [c.id for c in all_ch]
+    if scope == "half":
+        half = (len(all_ch) + 1) // 2
+        return [c.id for c in all_ch[:half]]
+    if scope in ("one", "multiple", "custom"):
+        return [int(x) for x in chapter_ids if str(x).isdigit()]
+    return [c.id for c in all_ch]
+
+
+def _pick_questions(chapter_ids, qtype, source, difficulty, n, exclude_ids):
+    q = Question.query.filter(Question.chapter_id.in_(chapter_ids),
+                              Question.qtype == qtype, Question.source == source)
+    if difficulty in ("Easy", "Medium", "Hard"):
+        q = q.filter_by(difficulty=difficulty)
+    if exclude_ids:
+        q = q.filter(~Question.id.in_(exclude_ids))
+    pool = q.all()
+    random.shuffle(pool)
+    return pool[:n], len(pool)
+
+
+@app.route("/generator", methods=["GET", "POST"])
+@login_required
+def generator():
+    classes = ClassLevel.query.order_by(ClassLevel.sort_order).all()
+    if request.method == "POST":
+        cid = request.form.get("class_level_id", type=int)
+        sid = request.form.get("subject_id", type=int)
+        scope = request.form.get("scope", "full")
+        chapter_ids = request.form.getlist("chapter_ids")
+        difficulty = request.form.get("difficulty", "Mixed")
+        title = (request.form.get("title") or "Test Paper").strip()
+        duration = request.form.get("duration_minutes", type=int) or 60
+        instructions = (request.form.get("instructions") or "").strip()
+        paper_date = request.form.get("paper_date") or date.today().isoformat()
+        variant = request.form.get("variant") or "A"
+        allow_short = request.form.get("allow_short") == "1"
+        if not (cid and sid):
+            flash("Select a class and a subject.", "error")
+            return render_template("generator.html", classes=classes)
+        ch_ids = _chapter_ids_for_scope(scope, sid, chapter_ids)
+        if not ch_ids:
+            flash("Select at least one chapter.", "error")
+            return render_template("generator.html", classes=classes)
+        marks_per = {t: (request.form.get(f"marks_{t.lower()}", type=int)
+                         or TYPE_MARKS_DEFAULT[t]) for t in QTYPES}
+        selected, shortfalls = [], []
+        total = 0
+        for qtype, f_th, f_ex in QTY_FIELDS:
+            for source, field in (("Theory", f_th), ("Exercise", f_ex)):
+                n = request.form.get(field, type=int) or 0
+                if n <= 0:
+                    continue
+                picked, avail = _pick_questions(ch_ids, qtype, source, difficulty, n, set())
+                if len(picked) < n:
+                    shortfalls.append(f"{TYPE_LABEL[qtype]} — {source}: asked {n}, only {avail} available")
+                for qq in picked:
+                    ch = db.session.get(Chapter, qq.chapter_id)
+                    selected.append({"id": qq.id, "text": qq.text, "qtype": qq.qtype,
+                                     "source": qq.source, "marks": marks_per[qq.qtype],
+                                     "options": qq.options, "correct_option": qq.correct_option,
+                                     "answer": qq.answer or "",
+                                     "chapter": ch.name if ch else ""})
+                    total += marks_per[qq.qtype]
+        if shortfalls and not allow_short:
+            # Do NOT silently make a short paper: show the warning and ask to confirm.
+            return render_template("generator.html", classes=classes,
+                                   shortfalls=shortfalls, form_data=request.form)
+        if not selected:
+            flash("No questions selected — set at least one quantity above 0.", "error")
+            return render_template("generator.html", classes=classes)
+        paper = Paper(title=title, teacher_id=current_user.id, class_level_id=cid,
+                      subject_id=sid, variant=variant, total_marks=total,
+                      duration_minutes=duration, instructions=instructions,
+                      paper_date=paper_date, questions_json=json.dumps(selected))
+        db.session.add(paper)
+        db.session.commit()
+        log_activity("paper_generated", f"{title} ({total} marks)")
+        if shortfalls:
+            flash("Paper generated with fewer questions than asked: " + "; ".join(shortfalls), "warning")
+        else:
+            flash("Paper generated successfully.", "success")
+        return redirect(url_for("paper_view", pid=paper.id))
+    return render_template("generator.html", classes=classes)
+
+
+@app.route("/generator/variant/<int:pid>", methods=["POST"])
+@login_required
+def paper_variant(pid):
+    orig = db.session.get(Paper, pid) or abort(404)
+    if not current_user.is_admin and orig.teacher_id != current_user.id:
+        abort(403)
+    variant = request.form.get("variant") or "B"
+    # Re-pick different questions from the same buckets, excluding the originals.
+    orig_qs = orig.questions
+    used_ids = {q["id"] for q in orig_qs}
+    ch_ids = list({db.session.get(Question, q["id"]).chapter_id
+                   for q in orig_qs if db.session.get(Question, q["id"])})
+    new_qs, total = [], 0
+    for qtype in QTYPES:
+        for source in SOURCES:
+            bucket = [q for q in orig_qs if q["qtype"] == qtype and q["source"] == source]
+            if not bucket:
+                continue
+            picked, _ = _pick_questions(ch_ids, qtype, source, "Mixed", len(bucket), used_ids)
+            # fall back to originals if the bank has no spares
+            chosen = picked if len(picked) == len(bucket) else bucket
+            for qq in chosen:
+                if isinstance(qq, Question):
+                    ch = db.session.get(Chapter, qq.chapter_id)
+                    new_qs.append({"id": qq.id, "text": qq.text, "qtype": qq.qtype,
+                                   "source": qq.source, "marks": bucket[0]["marks"],
+                                   "options": qq.options, "correct_option": qq.correct_option,
+                                   "answer": qq.answer or "",
+                                   "chapter": ch.name if ch else ""})
+                else:
+                    new_qs.append(qq)
+                total += bucket[0]["marks"]
+    paper = Paper(title=orig.title, teacher_id=orig.teacher_id,
+                  class_level_id=orig.class_level_id, subject_id=orig.subject_id,
+                  variant=variant, total_marks=total,
+                  duration_minutes=orig.duration_minutes,
+                  instructions=orig.instructions, paper_date=orig.paper_date,
+                  questions_json=json.dumps(new_qs))
+    db.session.add(paper)
+    db.session.commit()
+    flash(f"Paper {variant} created with a different question selection.", "success")
+    return redirect(url_for("paper_view", pid=paper.id))
+
+
+# ---------------- Papers: view / edit / history ----------------
+def _get_paper(pid):
+    p = db.session.get(Paper, pid) or abort(404)
+    if not current_user.is_admin and p.teacher_id != current_user.id:
+        abort(403)
+    return p
+
+
+@app.route("/papers/<int:pid>")
+@login_required
+def paper_view(pid):
+    p = _get_paper(pid)
+    return render_template("paper_view.html", paper=p, academy_name=ACADEMY_NAME)
+
+
+@app.route("/papers/<int:pid>/edit", methods=["GET", "POST"])
+@login_required
+def paper_edit(pid):
+    p = _get_paper(pid)
+    if request.method == "POST":
+        action = request.form.get("action")
+        qs = p.questions
+        if action == "save":
+            p.title = request.form.get("title") or p.title
+            p.instructions = request.form.get("instructions") or ""
+            p.duration_minutes = request.form.get("duration_minutes", type=int) or p.duration_minutes
+            new_qs, total = [], 0
+            for i, q in enumerate(qs):
+                q["text"] = request.form.get(f"text_{i}", q["text"])
+                q["marks"] = request.form.get(f"marks_{i}", type=int) or q["marks"]
+                total += q["marks"]
+                new_qs.append(q)
+            p.questions_json = json.dumps(new_qs)
+            p.total_marks = total
+            db.session.commit()
+            flash("Paper saved.", "success")
+            return redirect(url_for("paper_view", pid=p.id))
+        if action == "remove":
+            idx = int(request.form.get("idx", -1))
+            if 0 <= idx < len(qs):
+                qs.pop(idx)
+                p.questions_json = json.dumps(qs)
+                p.total_marks = sum(q["marks"] for q in qs)
+                db.session.commit()
+                flash("Question removed.", "success")
+        elif action == "move":
+            idx = int(request.form.get("idx", -1))
+            direction = int(request.form.get("dir", 0))
+            j = idx + direction
+            if 0 <= idx < len(qs) and 0 <= j < len(qs):
+                qs[idx], qs[j] = qs[j], qs[idx]
+                p.questions_json = json.dumps(qs)
+                db.session.commit()
+        elif action == "replace":
+            idx = int(request.form.get("idx", -1))
+            if 0 <= idx < len(qs):
+                old = qs[idx]
+                ch_ids = [c.id for c in Chapter.query.filter_by(
+                    subject_id=p.subject_id).all()]
+                # find chapter id of the old question
+                orig = db.session.get(Question, old["id"])
+                pool_ids = [orig.chapter_id] if orig else ch_ids
+                used = {q["id"] for q in qs}
+                picked, _ = _pick_questions(pool_ids, old["qtype"], old["source"],
+                                            "Mixed", 1, used)
+                if picked:
+                    qq = picked[0]
+                    qs[idx] = {"id": qq.id, "text": qq.text, "qtype": qq.qtype,
+                               "source": qq.source, "marks": old["marks"],
+                               "options": qq.options, "correct_option": qq.correct_option,
+                               "answer": qq.answer or "", "chapter": old.get("chapter", "")}
+                    p.questions_json = json.dumps(qs)
+                    db.session.commit()
+                    flash("Question replaced.", "success")
+                else:
+                    flash("No unused question available in that bucket.", "error")
+        return redirect(url_for("paper_edit", pid=p.id))
+    return render_template("paper_edit.html", paper=p)
+
+
+@app.route("/papers/<int:pid>/duplicate", methods=["POST"])
+@login_required
+def paper_duplicate(pid):
+    p = _get_paper(pid)
+    copy = Paper(title=p.title + " (Copy)", teacher_id=current_user.id,
+                 class_level_id=p.class_level_id, subject_id=p.subject_id,
+                 variant=p.variant, total_marks=p.total_marks,
+                 duration_minutes=p.duration_minutes, instructions=p.instructions,
+                 paper_date=p.paper_date, questions_json=p.questions_json)
+    db.session.add(copy)
+    db.session.commit()
+    flash("Paper copied.", "success")
+    return redirect(url_for("paper_view", pid=copy.id))
+
+
+@app.route("/papers/<int:pid>/delete", methods=["POST"])
+@login_required
+def paper_delete(pid):
+    p = _get_paper(pid)
+    db.session.delete(p)
+    db.session.commit()
+    flash("Paper deleted.", "success")
+    return redirect(url_for("history"))
+
 
 @app.route("/history")
 @login_required
 def history():
-    con=db()
-    rows=con.execute("""SELECT p.*,u.name creator FROM papers p LEFT JOIN users u ON u.id=p.created_by ORDER BY p.id DESC""").fetchall()
-    con.close(); return render_template("history.html",papers=rows)
+    q = Paper.query
+    if not current_user.is_admin:
+        q = q.filter_by(teacher_id=current_user.id)
+    title = request.args.get("q", "").strip()
+    cid = request.args.get("class_level_id", type=int)
+    sid = request.args.get("subject_id", type=int)
+    d = request.args.get("date", "").strip()
+    if title:
+        q = q.filter(Paper.title.ilike(f"%{title}%"))
+    if cid:
+        q = q.filter_by(class_level_id=cid)
+    if sid:
+        q = q.filter_by(subject_id=sid)
+    if d:
+        q = q.filter_by(paper_date=d)
+    papers = q.order_by(Paper.created_at.desc()).all()
+    classes = ClassLevel.query.order_by(ClassLevel.sort_order).all()
+    return render_template("history.html", papers=papers, classes=classes,
+                           sel=dict(q=title, cid=cid, sid=sid, d=d))
 
-if __name__=="__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
+
+# ---------------- PDF export ----------------
+def _urdu_font_available():
+    for cand in (os.path.join(BASE_DIR, "static", "fonts", "NotoNastaliqUrdu-Regular.ttf"),
+                 "/usr/share/fonts/truetype/noto/NotoNastaliqUrdu-Regular.ttf"):
+        if os.path.exists(cand):
+            return cand
+    return None
+
+
+@app.route("/papers/<int:pid>/pdf")
+@login_required
+def paper_pdf(pid):
+    return _paper_pdf(pid, answer_key=False)
+
+
+@app.route("/papers/<int:pid>/answer-key")
+@login_required
+def paper_answer_key(pid):
+    return _paper_pdf(pid, answer_key=True)
+
+
+def _paper_pdf(pid, answer_key=False):
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
+                                    Table, TableStyle, PageBreak)
+    from reportlab.lib import colors
+
+    p = _get_paper(pid)
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=18 * mm, bottomMargin=18 * mm,
+                            leftMargin=18 * mm, rightMargin=18 * mm,
+                            title=f"{p.title} - {'Answer Key' if answer_key else 'Paper'}")
+    h = ParagraphStyle("h", fontName="Helvetica-Bold", fontSize=16, alignment=TA_CENTER)
+    sub = ParagraphStyle("sub", fontName="Helvetica", fontSize=11, alignment=TA_CENTER)
+    body = ParagraphStyle("body", fontName="Helvetica", fontSize=11, leading=15)
+    bold = ParagraphStyle("bold", fontName="Helvetica-Bold", fontSize=12, leading=16)
+    story = []
+    story.append(Paragraph(ACADEMY_NAME, h))
+    story.append(Paragraph("Test Paper" + (" — Answer Key" if answer_key else ""), sub))
+    story.append(Spacer(1, 4 * mm))
+    meta = [[f"Class: {p.class_level.name if p.class_level else ''}",
+             f"Subject: {p.subject.name if p.subject else ''}"],
+            [f"Date: {p.paper_date or ''}", f"Time: {p.duration_minutes} minutes"],
+            [f"Paper: {p.variant}", f"Total Marks: {p.total_marks}"]]
+    t = Table(meta, colWidths=[85 * mm, 85 * mm])
+    t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.5, colors.black),
+                           ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                           ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                           ("TOPPADDING", (0, 0), (-1, -1), 4),
+                           ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
+    story.append(t)
+    story.append(Spacer(1, 4 * mm))
+    story.append(Paragraph(f"<b>{p.title}</b>", sub))
+    if p.instructions and not answer_key:
+        story.append(Spacer(1, 3 * mm))
+        story.append(Paragraph(f"<b>Instructions:</b> {p.instructions}", body))
+    story.append(Spacer(1, 4 * mm))
+    grouped = {}
+    for qq in p.questions:
+        grouped.setdefault(qq["qtype"], []).append(qq)
+    n = 0
+    for qtype in QTYPES:
+        items = grouped.get(qtype, [])
+        if not items:
+            continue
+        story.append(Paragraph(f"Section: {TYPE_LABEL[qtype]}", bold))
+        story.append(Spacer(1, 2 * mm))
+        for qq in items:
+            n += 1
+            story.append(Paragraph(f"Q{n}. {qq['text']} &nbsp; <b>[{qq['marks']} marks]</b>", body))
+            if qtype == "MCQ" and qq.get("options"):
+                for letter, opt in zip("ABCD", qq["options"]):
+                    story.append(Paragraph(f"&nbsp;&nbsp;&nbsp;({letter}) {opt}", body))
+                if answer_key:
+                    story.append(Paragraph(f"&nbsp;&nbsp;&nbsp;<b>Answer: ({qq.get('correct_option', '')})</b>", body))
+            elif answer_key and qq.get("answer"):
+                story.append(Paragraph(f"&nbsp;&nbsp;&nbsp;<b>Answer:</b> {qq['answer']}", body))
+            story.append(Spacer(1, 2 * mm))
+        story.append(Spacer(1, 2 * mm))
+    if not answer_key:
+        story.append(Spacer(1, 6 * mm))
+        story.append(Paragraph("Name: ______________________ &nbsp;&nbsp; Roll No: __________", body))
+
+    def footer(canvas, doc_):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 9)
+        canvas.drawCentredString(A4[0] / 2, 12 * mm, f"Page {doc_.page}  |  {ACADEMY_NAME}")
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=footer, onLaterPages=footer)
+    buf.seek(0)
+    fname = f"{p.title.replace(' ', '_')}_{'answer-key' if answer_key else 'paper'}.pdf"
+    return send_file(buf, mimetype="application/pdf", as_attachment=True,
+                     download_name=secure_filename(fname) or "paper.pdf")
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=True)

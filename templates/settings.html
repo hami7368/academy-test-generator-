@@ -1,0 +1,8 @@
+{% extends "base.html" %}{% block content %}
+<h1>Settings</h1>
+<div class="card"><h2>Academy</h2><p>Academy name on papers: <b>{{ academy_name }}</b> (set with the <code>ACADEMY_NAME</code> environment variable).</p></div>
+<div class="card"><h2>AI PDF Extraction — NOT implemented yet</h2>
+<p>Automatic question extraction from textbook PDFs is <b>not built into this version</b>. Questions are added manually in the Question Bank, which works fully today.</p>
+<p>AI extraction status: <b>{{ 'API key found in environment' if ai_configured else 'No API key configured' }}</b>. When extraction is added later, the key will be read from the <code>GEMINI_API_KEY</code> or <code>OPENAI_API_KEY</code> environment variable on the server — never stored in the database and never typed into this page. Do not paste an API key anywhere in the app.</p></div>
+<div class="card"><h2>Security</h2><p>Only one admin account exists. There is no public registration page. Teachers are created by the admin only.</p></div>
+{% endblock %}

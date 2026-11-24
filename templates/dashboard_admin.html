@@ -1,0 +1,15 @@
+{% extends "base.html" %}{% block content %}
+<h1>Admin Dashboard</h1><p class="muted">Welcome, {{ current_user.name }} (Owner / Admin)</p>
+<div class="grid">
+<div class="stat"><b>{{ stats.teachers }}</b>Teachers</div>
+<div class="stat"><b>{{ stats.questions }}</b>Questions</div>
+<div class="stat"><b>{{ stats.papers }}</b>Papers</div>
+<div class="stat"><b>{{ stats.books }}</b>Books</div>
+<div class="stat"><b>{{ stats.classes }}</b>Classes</div>
+</div>
+<p><a class="btn" href="/generator">+ New Paper</a> <a class="btn btn-secondary" href="/admin/teachers">Manage Teachers</a> <a class="btn btn-secondary" href="/questions/new">Add Question</a> <a class="btn btn-secondary" href="/admin/books">Upload Book</a></p>
+<div class="card"><h2>Recent Papers (all teachers)</h2>
+{% for p in recent_papers %}<p><a href="/papers/{{ p.id }}">{{ p.title }}</a> — {{ p.class_level.name if p.class_level }} · {{ p.subject.name if p.subject }} · {{ p.total_marks }} marks · by {{ p.teacher.name }} · {{ p.created_at.strftime('%d %b %Y') }}</p>{% else %}<p class="muted">No papers yet.</p>{% endfor %}</div>
+<div class="card"><h2>Recent Activity</h2>
+{% for l in recent_logs %}<p class="muted">{{ l.created_at.strftime('%d %b %H:%M') }} — <b>{{ l.action }}</b> {{ l.detail }} ({{ l.user.name if l.user }})</p>{% else %}<p class="muted">No activity yet.</p>{% endfor %}</div>
+{% endblock %}
