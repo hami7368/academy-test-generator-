@@ -79,6 +79,44 @@ Do **not** use Render's free PostgreSQL — it expires after 30 days.
    Log in, then add teachers in **Teachers → Add Teacher**.
 6. Later you can add a custom domain in Render → Settings → Custom Domain, no rebuild needed.
 
+**Note (2026-11-24):** Render now asks new accounts for a credit card at deploy time
+(a temporary $1 authorization, free plan stays $0). If you do not want to add a card,
+use the PythonAnywhere deploy below instead.
+
+## Deploy free, no card: PythonAnywhere (SQLite)
+
+**Why this pair:** PythonAnywhere's free Beginner account needs **no credit card**,
+the app does not sleep, and the SQLite database file lives on PythonAnywhere's disk
+so it persists. Trade-off: free PythonAnywhere accounts **cannot connect to an
+external Postgres database (Neon)** — only HTTP(S) to whitelisted sites is allowed —
+so the database here is SQLite, not Neon. Your Neon project stays ready for a later
+move back to Render; teachers/papers made on PythonAnywhere will not auto-transfer.
+
+1. **Sign up:** pythonanywhere.com → **Pricing → Beginner (free)** → create account.
+   No card needed. Your site will be `https://YOUR-USERNAME.pythonanywhere.com`.
+2. **Get the code:** open a **Bash console** (Consoles tab) and run:
+   ```
+   git clone https://github.com/hami7368/academy-test-generator-.git
+   cd academy-test-generator-
+   mkvirtualenv --python=python3.12 academy-test-generator
+   pip install -r requirements.txt
+   ```
+3. **Create the web app:** Web tab → **Add a new web app** → **Manual configuration**
+   → Python 3.12 → pick your new virtualenv (`academy-test-generator`).
+4. **WSGI file:** on the Web tab, open the **WSGI configuration file** link, delete its
+   contents and paste in `pythonanywhere_wsgi.py` from this repo — replacing `USERNAME`
+   (3 places) with your PythonAnywhere username, and the placeholder values with your
+   own `SECRET_KEY` (long random string), `ADMIN_EMAIL`, `ADMIN_PASSWORD` (12+ chars,
+   never share it) and `ACADEMY_NAME`. Do **not** add `DATABASE_URL`.
+5. **Static files:** on the Web tab, under **Static Files**, add:
+   URL `/static/` → Directory `/home/USERNAME/academy-test-generator-/static/`
+   (again with your real username).
+6. Click the green **Reload** button. Open `https://YOUR-USERNAME.pythonanywhere.com`
+   and log in with your `ADMIN_EMAIL` / `ADMIN_PASSWORD`. The admin account and the
+   194 seed questions are created automatically on first start.
+7. **Renewal:** free web apps expire after ~3 months of inactivity — PythonAnywhere
+   emails you a reminder; click the button on the Web tab to extend, no rebuild needed.
+
 ## Honest free-tier limits
 
 - **Render free web service sleeps after 15 minutes idle** — the first visit after a pause
@@ -90,6 +128,11 @@ Do **not** use Render's free PostgreSQL — it expires after 30 days.
   and re-upload when needed. For permanent storage later: Render paid disk, or cloud
   storage (e.g. Cloudinary / S3). The question bank and papers live in Neon Postgres
   and **are** permanent.
+- **PythonAnywhere free uses SQLite, not Neon Postgres** — free accounts cannot
+  reach an external Postgres server, so question bank and papers live in a SQLite
+  file on PythonAnywhere's disk. It persists across restarts, but it is one file:
+  download a backup copy from the Files tab from time to time. Free web apps also
+  need a one-click renewal every ~3 months of inactivity (email reminder sent).
 - **AI PDF extraction is NOT implemented yet.** The Settings page says so plainly.
   Questions are added manually today. When extraction is added, the key will come from
   the `GEMINI_API_KEY` / `OPENAI_API_KEY` environment variable — never paste a key
