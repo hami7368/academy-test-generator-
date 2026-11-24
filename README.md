@@ -24,6 +24,8 @@ and download clean PDF papers and answer keys. Installable as a mobile app (PWA)
   **not** silently make a short paper — you must tick "generate anyway" to proceed.
 - **PWA:** manifest, service worker (offline fallback page), 192px + 512px icons,
   standalone display. On Android Chrome: menu → "Add to Home Screen" / "Install app".
+  (Icons are generated from code by `generate_icons.py` at startup/build time,
+  so the PWA works even though no binary PNG is stored in the repo.)
 - **PDF:** ReportLab, clean academy layout (name, class, subject, date, time, total marks,
   sections by type, marks in brackets, page numbers). Urdu renders correctly in the
   web preview; **PDF Urdu needs a font** — see "Urdu in PDFs" below.

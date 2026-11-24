@@ -28,6 +28,14 @@ BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 UPLOAD_DIR = os.path.join(BASE_DIR, "instance", "uploads", "books")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+# PWA icons are generated from code (see generate_icons.py) because the
+# binary PNGs cannot be pushed through the text-only GitHub upload API.
+try:
+    from generate_icons import generate_icons
+    generate_icons()
+except Exception:
+    pass
+
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 _db_url = os.environ.get("DATABASE_URL", "") or ""
