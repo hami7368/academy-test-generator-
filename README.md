@@ -172,6 +172,29 @@ small batches (a few at a time, not the whole ZIP at once).
   and a password of 8+ characters, and submit. The page locks forever afterwards.
 - There are **no default credentials** (no admin/admin). Never share the admin password.
 
+## Import questions from Excel (bulk add)
+
+Typing questions one by one is slow. Instead, fill an Excel sheet and upload it:
+
+1. Log in as admin → **Question Bank → Import from Excel**.
+2. Click **Download Excel template** — it has the right headings and 2 example rows.
+3. Fill one question per row: **Class** (e.g. `Class 9th`), **Subject** (`Physics`),
+   **Chapter**, **Chapter No**, **Type** (`MCQ` / `Short` / `Long` / `Numerical`),
+   **Source** (`Theory` or `Exercise`), **Difficulty** (`Easy` / `Medium` / `Hard`),
+   **Marks**, **Question**, **Option A–D** (MCQ only), **Correct Option** (A–D, MCQ only),
+   **Answer**. Keep the heading row exactly as in the template.
+4. Upload the file. The page tells you how many questions were imported and lists
+   any skipped rows with the reason (e.g. unknown class/subject, MCQ missing an
+   option). Good rows are imported even if some rows fail.
+5. Notes: Class and Subject must already exist (add them under Classes & Subjects
+   first). A chapter that does not exist yet is created automatically. Uploading
+   the same file again is safe — questions already in the bank are skipped, not
+   duplicated. A `.csv` file with the same columns works too.
+
+After a code update on PythonAnywhere, run in the Bash console
+`git pull` and `pip install -r requirements.txt` (only needed when
+`requirements.txt` changed), then click **Reload** on the Web tab.
+
 ## Add a teacher
 
 Admin Panel → **Teachers → Add Teacher** → enter the teacher's name, email and a

@@ -1,0 +1,49 @@
+{% extends "base.html" %}{% block content %}
+<h1>Import Questions from Excel</h1>
+<p>Download the template, fill one question per row in Excel, then upload the file here. No need to type questions one by one in the app.</p>
+<p><a class="btn" href="/admin/questions/import/template">⬇ Download Excel template</a>
+<a class="btn btn-secondary" href="/questions">Back to Question Bank</a></p>
+
+<div class="card">
+<h3>How to fill the sheet</h3>
+<table>
+<tr><th>Column</th><th>What to write</th></tr>
+<tr><td>Class</td><td>Exactly as in the app, e.g. <b>Class 9th</b></td></tr>
+<tr><td>Subject</td><td>Exactly as in the app, e.g. <b>Physics</b></td></tr>
+<tr><td>Chapter</td><td>Chapter name, e.g. <b>Physical Quantities and Measurement</b>. If it does not exist yet, it will be created automatically.</td></tr>
+<tr><td>Chapter No</td><td>Chapter number, e.g. <b>1</b> (only used when a new chapter is created)</td></tr>
+<tr><td>Type</td><td><b>MCQ</b>, <b>Short</b>, <b>Long</b> or <b>Numerical</b></td></tr>
+<tr><td>Source</td><td><b>Theory</b> or <b>Exercise</b> — this is how papers keep them separate</td></tr>
+<tr><td>Difficulty</td><td><b>Easy</b>, <b>Medium</b> or <b>Hard</b> (blank = Medium)</td></tr>
+<tr><td>Marks</td><td>Number, e.g. <b>1</b> (blank = 1)</td></tr>
+<tr><td>Question</td><td>The full question text</td></tr>
+<tr><td>Option A – D</td><td>Only for MCQ — all 4 options are required</td></tr>
+<tr><td>Correct Option</td><td>Only for MCQ — <b>A</b>, <b>B</b>, <b>C</b> or <b>D</b></td></tr>
+<tr><td>Answer</td><td>Answer / solution (shown in the answer key)</td></tr>
+</table>
+<p class="muted">Keep the first row (headings) exactly as in the template. Class and Subject must already exist in the app — add them under Classes &amp; Subjects first if needed. Rows with mistakes are skipped and listed below, the good rows are still imported. You can also upload a <b>.csv</b> file with the same columns.</p>
+</div>
+
+<div class="card">
+<form method="post" enctype="multipart/form-data">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<div><label>Excel (.xlsx) or CSV file</label><input type="file" name="file" accept=".xlsx,.xlsm,.csv" required></div>
+<p><button class="btn" type="submit">Upload &amp; Import</button></p>
+</form>
+</div>
+
+{% if imported is defined %}
+<div class="card">
+<h3>Import result</h3>
+<p><b>{{ imported }} of {{ total }} questions imported.</b></p>
+{% if errors %}
+<p>The following rows were skipped:</p>
+<ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+<p class="muted">Fix those rows in Excel and upload the file again — questions that are already in the bank are automatically skipped, so you can safely re-upload the whole file.</p>
+{% else %}
+<p>All rows imported successfully. ✅</p>
+{% endif %}
+<p><a class="btn" href="/questions">View Question Bank</a></p>
+</div>
+{% endif %}
+{% endblock %}

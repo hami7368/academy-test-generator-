@@ -141,6 +141,57 @@ def test_paper_generation_marks_and_pdf_and_history():
         assert appmod.Paper.query.filter_by(title="Impossible Paper").first() is None
 
 
+def test_excel_import_template_and_upload():
+    import io as _io
+    from openpyxl import Workbook, load_workbook
+    c = make_client()
+    login(c, "admin@test.com", "AdminPass123")
+    # template downloads as a real .xlsx with the right headings
+    t = c.get("/admin/questions/import/template")
+    assert t.status_code == 200
+    assert "spreadsheetml" in t.headers.get("Content-Type", "")
+    wb = load_workbook(filename=_io.BytesIO(t.data), read_only=True)
+    assert list(next(wb.active.iter_rows(values_only=True)))[:3] == ["Class", "Subject", "Chapter"]
+    # build an upload: 1 good MCQ, 1 good Short in a NEW chapter, 1 bad row
+    wb2 = Workbook()
+    ws = wb2.active
+    ws.append(["Class", "Subject", "Chapter", "Chapter No", "Type", "Source",
+               "Difficulty", "Marks", "Question", "Option A", "Option B",
+               "Option C", "Option D", "Correct Option", "Answer"])
+    ws.append(["Class 9th", "Physics", "Kinematics", 2, "MCQ", "Theory", "Easy", 1,
+               "Import test MCQ?", "1", "2", "3", "4", "B", "2 it is."])
+    ws.append(["Class 9th", "Physics", "Brand New Chapter", 99, "Short", "Exercise",
+               "Medium", 2, "Import test short?", "", "", "", "", "", "Short answer."])
+    ws.append(["Class 9th", "Physics", "Kinematics", 2, "Essay", "Theory", "Easy", 1,
+               "Bad type row?", "", "", "", "", "", ""])
+    buf = _io.BytesIO()
+    wb2.save(buf)
+    data_bytes = buf.getvalue()
+    buf.seek(0)
+    with appmod.app.app_context():
+        before = appmod.Question.query.count()
+    r = c.post("/admin/questions/import", data={"file": (buf, "questions.xlsx")},
+               content_type="multipart/form-data", follow_redirects=True)
+    assert b"2 of 3 questions imported" in r.data, r.data[:500]
+    assert b"Row 4" in r.data  # bad row reported
+    with appmod.app.app_context():
+        assert appmod.Question.query.count() == before + 2
+        assert appmod.Question.query.filter_by(text="Import test MCQ?").first() is not None
+        assert appmod.Chapter.query.filter_by(name="Brand New Chapter").first() is not None
+    # re-uploading the same file imports 0 new (duplicates skipped)
+    buf2 = _io.BytesIO(data_bytes)
+    r2 = c.post("/admin/questions/import", data={"file": (buf2, "questions.xlsx")},
+                content_type="multipart/form-data", follow_redirects=True)
+    assert b"0 of 3 questions imported" in r2.data
+
+
+def test_teacher_cannot_import_questions():
+    c = make_client()
+    login(c, "teacher@test.com", "TeachPass123")
+    assert c.get("/admin/questions/import").status_code == 403
+    assert c.get("/admin/questions/import/template").status_code == 403
+
+
 def test_setup_locks_after_admin_exists():
     c = make_client()
     r = c.get("/setup", follow_redirects=True)

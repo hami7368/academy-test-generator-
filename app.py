@@ -688,6 +688,220 @@ def question_delete(qid):
     return redirect(url_for("list_questions"))
 
 
+# ---------------- Bulk import from Excel (.xlsx / .csv) ----------------
+# The admin downloads a ready-made Excel template, fills one question per
+# row, and uploads it. Columns (first row = headings):
+# Class | Subject | Chapter | Chapter No | Type | Source | Difficulty |
+# Marks | Question | Option A | Option B | Option C | Option D |
+# Correct Option | Answer
+# Type: MCQ / Short / Long / Numerical. Source: Theory / Exercise.
+IMPORT_COLUMNS = ["Class", "Subject", "Chapter", "Chapter No", "Type", "Source",
+                  "Difficulty", "Marks", "Question", "Option A", "Option B",
+                  "Option C", "Option D", "Correct Option", "Answer"]
+IMPORT_HEADER_ALIASES = {
+    "class": "Class", "subject": "Subject", "chapter": "Chapter",
+    "chapter no": "Chapter No", "chapter number": "Chapter No", "ch no": "Chapter No",
+    "type": "Type", "question type": "Type", "source": "Source",
+    "theory/exercise": "Source", "difficulty": "Difficulty", "level": "Difficulty",
+    "marks": "Marks", "mark": "Marks", "question": "Question",
+    "question text": "Question", "option a": "Option A", "option b": "Option B",
+    "option c": "Option C", "option d": "Option D",
+    "correct option": "Correct Option", "correct answer": "Correct Option",
+    "answer": "Answer", "solution": "Answer",
+}
+
+
+def _norm_header(value):
+    return (str(value or "").strip().lower()
+            .replace("_", " ").replace("-", " ").strip())
+
+
+def _read_import_file(f):
+    """Read an uploaded .xlsx or .csv into a list of dicts keyed by IMPORT_COLUMNS."""
+    name = (f.filename or "").lower()
+    if name.endswith(".csv"):
+        import csv as _csv
+        text = f.read().decode("utf-8-sig", errors="replace")
+        reader = _csv.DictReader(text.splitlines())
+        rows = []
+        for raw in reader:
+            row = {}
+            for k, v in (raw or {}).items():
+                col = IMPORT_HEADER_ALIASES.get(_norm_header(k))
+                if col:
+                    row[col] = v
+            rows.append(row)
+        return rows
+    if not name.endswith((".xlsx", ".xlsm")):
+        raise ValueError("Please upload an Excel (.xlsx) or CSV (.csv) file.")
+    from openpyxl import load_workbook
+    wb = load_workbook(filename=f, read_only=True, data_only=True)
+    ws = wb.active
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows:
+        return []
+    headers = [IMPORT_HEADER_ALIASES.get(_norm_header(h)) for h in rows[0]]
+    out = []
+    for values in rows[1:]:
+        if all(v is None or str(v).strip() == "" for v in values):
+            continue
+        row = {}
+        for col, v in zip(headers, values):
+            if col:
+                row[col] = v
+        out.append(row)
+    return out
+
+
+def _import_question_rows(rows):
+    """Validate and insert parsed rows. Returns (imported_count, [error strings])."""
+    imported, errors = 0, []
+
+    def _lookup(model, name, extra=None):
+        if not name:
+            return None
+        q = model.query
+        if extra:
+            q = q.filter_by(**extra)
+        name = str(name).strip()
+        for obj in q.all():
+            if obj.name.strip().lower() == name.lower():
+                return obj
+        return None
+
+    for i, row in enumerate(rows, start=2):  # row 2 = first data row in the sheet
+        def err(msg):
+            errors.append(f"Row {i}: {msg}")
+
+        cls_name = str(row.get("Class") or "").strip()
+        subj_name = str(row.get("Subject") or "").strip()
+        ch_name = str(row.get("Chapter") or "").strip()
+        text = str(row.get("Question") or "").strip()
+        qtype = str(row.get("Type") or "").strip()
+        source = str(row.get("Source") or "").strip()
+        if not (cls_name and subj_name and ch_name and text):
+            err("Class, Subject, Chapter and Question are all required — row skipped.")
+            continue
+        if qtype not in QTYPES:
+            err(f"Type must be one of {', '.join(QTYPES)} (got '{qtype}') — row skipped.")
+            continue
+        if source not in SOURCES:
+            err(f"Source must be Theory or Exercise (got '{source}') — row skipped.")
+            continue
+        cls = _lookup(ClassLevel, cls_name)
+        if not cls:
+            err(f"Class '{cls_name}' does not exist — add it under Classes & Subjects first.")
+            continue
+        subj = _lookup(Subject, subj_name, {"class_level_id": cls.id})
+        if not subj:
+            err(f"Subject '{subj_name}' does not exist for {cls_name} — add it first.")
+            continue
+        ch = _lookup(Chapter, ch_name, {"subject_id": subj.id})
+        if not ch:
+            try:
+                ch_no = int(float(str(row.get("Chapter No") or 0) or 0))
+            except (TypeError, ValueError):
+                ch_no = 0
+            if not ch_no:
+                ch_no = (db.session.query(db.func.max(Chapter.number))
+                         .filter_by(subject_id=subj.id).scalar() or 0) + 1
+            ch = Chapter(name=ch_name, number=ch_no, subject_id=subj.id)
+            db.session.add(ch)
+            db.session.flush()
+        difficulty = str(row.get("Difficulty") or "Medium").strip() or "Medium"
+        if difficulty not in DIFFICULTIES:
+            difficulty = "Medium"
+        dup = Question.query.filter_by(class_level_id=cls.id, subject_id=subj.id,
+                                       chapter_id=ch.id, qtype=qtype, source=source,
+                                       text=text).first()
+        if dup:
+            err("This exact question is already in the bank — skipped.")
+            continue
+        try:
+            marks = int(float(str(row.get("Marks") or 1) or 1))
+        except (TypeError, ValueError):
+            marks = 1
+        q = Question(class_level_id=cls.id, subject_id=subj.id, chapter_id=ch.id,
+                     qtype=qtype, source=source, text=text,
+                     difficulty=difficulty, marks=max(marks, 0),
+                     answer=str(row.get("Answer") or "").strip())
+        if qtype == "MCQ":
+            opts = [str(row.get(f"Option {L}") or "").strip() for L in "ABCD"]
+            if any(not o for o in opts):
+                err("MCQ needs all 4 options (A–D) — row skipped.")
+                db.session.rollback()
+                continue
+            correct = str(row.get("Correct Option") or "A").strip().upper()[:1]
+            if correct not in "ABCD":
+                err("Correct Option must be A, B, C or D — row skipped.")
+                db.session.rollback()
+                continue
+            q.options_json = json.dumps(opts)
+            q.correct_option = correct
+        db.session.add(q)
+        try:
+            db.session.commit()
+            imported += 1
+        except Exception as e:
+            db.session.rollback()
+            err(f"Could not save: {e}")
+    return imported, errors
+
+
+@app.route("/admin/questions/import", methods=["GET", "POST"])
+@login_required
+@admin_required
+def question_import():
+    if request.method == "POST":
+        f = request.files.get("file")
+        if not f or not f.filename:
+            flash("Please choose an Excel (.xlsx) or CSV file to upload.", "error")
+            return render_template("question_import.html", columns=IMPORT_COLUMNS)
+        try:
+            rows = _read_import_file(f)
+        except Exception as e:
+            flash(f"Could not read that file: {e}", "error")
+            return render_template("question_import.html", columns=IMPORT_COLUMNS)
+        if not rows:
+            flash("No questions found in the file — did you keep the heading row?", "error")
+            return render_template("question_import.html", columns=IMPORT_COLUMNS)
+        imported, errors = _import_question_rows(rows)
+        log_activity("questions_imported", f"{imported} questions from {f.filename}")
+        return render_template("question_import.html", columns=IMPORT_COLUMNS,
+                               imported=imported, total=len(rows), errors=errors)
+    return render_template("question_import.html", columns=IMPORT_COLUMNS)
+
+
+@app.route("/admin/questions/import/template")
+@login_required
+@admin_required
+def question_import_template():
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Questions"
+    ws.append(IMPORT_COLUMNS)
+    ws.append(["Class 9th", "Physics", "Physical Quantities and Measurement", 1,
+               "MCQ", "Theory", "Easy", 1,
+               "What is the SI unit of force?",
+               "Newton", "Joule", "Watt", "Pascal", "A",
+               "Newton — named after Isaac Newton."])
+    ws.append(["Class 9th", "Physics", "Physical Quantities and Measurement", 1,
+               "Short", "Exercise", "Medium", 2,
+               "Define a physical quantity and give two examples.",
+               "", "", "", "", "",
+               "A quantity that can be measured, e.g. length and mass."])
+    for col in range(1, len(IMPORT_COLUMNS) + 1):
+        ws.column_dimensions[ws.cell(row=1, column=col).column_letter].width = 18
+    ws.column_dimensions["I"].width = 55
+    ws.column_dimensions["O"].width = 40
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return send_file(buf, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                     as_attachment=True, download_name="question-import-template.xlsx")
+
+
 @app.route("/api/subjects/<int:cid>")
 @login_required
 def api_subjects(cid):

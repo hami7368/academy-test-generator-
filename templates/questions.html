@@ -1,6 +1,6 @@
 {% extends "base.html" %}{% block content %}
 <h1>Question Bank</h1>
-{% if current_user.is_admin %}<p><a class="btn" href="/questions/new">+ Add Question</a></p>{% endif %}
+{% if current_user.is_admin %}<p><a class="btn" href="/questions/new">+ Add Question</a> <a class="btn btn-secondary" href="/admin/questions/import">⬆ Import from Excel</a></p>{% endif %}
 <div class="card"><form method="get" class="row">
 <div><label>Class</label><select name="class_level_id"><option value="">All</option>{% for c in classes %}<option value="{{ c.id }}" {{ 'selected' if sel.cid==c.id }}>{{ c.name }}</option>{% endfor %}</select></div>
 <div><label>Type</label><select name="qtype"><option value="">All</option>{% for t in ['MCQ','Short','Long','Numerical'] %}<option {{ 'selected' if sel.qt==t }}>{{ t }}</option>{% endfor %}</select></div>
