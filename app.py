@@ -57,6 +57,12 @@ csrf = CSRFProtect(app)
 
 QTYPES = ["MCQ", "Short", "Long", "Numerical"]
 SOURCES = ["Theory", "Exercise"]
+# Question formats — what kind of question it is (Essay for English, Tashreeh
+# for Urdu, ...). "General" is the default. Formats power the generator's
+# custom "Add Section" blocks: a section can pick only Essay questions, etc.
+FORMATS = ["General", "Essay", "Story", "Application", "Letter", "Translation",
+           "Tenses", "Comprehension", "Tashreeh", "Khulasa", "Mazmoon",
+           "Darkhwast", "Tarjuma"]
 DIFFICULTIES = ["Easy", "Medium", "Hard"]
 ALLOWED_EXT = {"pdf"}
 
@@ -123,6 +129,7 @@ class Question(db.Model):
     chapter_id = db.Column(db.Integer, db.ForeignKey("chapter.id"), nullable=False)
     qtype = db.Column(db.String(20), nullable=False)       # MCQ/Short/Long/Numerical
     source = db.Column(db.String(20), nullable=False)      # Theory/Exercise
+    format = db.Column(db.String(30), default="General")   # Essay, Tashreeh, ...
     text = db.Column(db.Text, nullable=False)
     options_json = db.Column(db.Text)                       # JSON list of 4 options (MCQ)
     correct_option = db.Column(db.String(5))
@@ -156,6 +163,7 @@ class Paper(db.Model):
     paper_date = db.Column(db.String(20))
     questions_json = db.Column(db.Text, nullable=False, default="[]")  # snapshot [{id,text,qtype,source,marks,options,correct_option,answer,chapter}]
     attempt_json = db.Column(db.Text, default="{}")  # {"Short": 5} = attempt any 5 out of the Short questions
+    sections_json = db.Column(db.Text, default="[]")  # custom sections [{title,qtype,format,theory,exercise,marks,attempt}]
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     teacher = db.relationship("User")
     class_level = db.relationship("ClassLevel")
@@ -169,11 +177,23 @@ class Paper(db.Model):
             return {}
 
     @property
-    def questions(self):
+    def sections(self):
         try:
-            return json.loads(self.questions_json or "[]")
+            return json.loads(self.sections_json or "[]")
         except Exception:
             return []
+
+    @property
+    def questions(self):
+        try:
+            qs = json.loads(self.questions_json or "[]")
+        except Exception:
+            return []
+        # Papers made before sections/formats existed have no such keys.
+        for q in qs:
+            q.setdefault("section", "")
+            q.setdefault("format", "General")
+        return qs
 
 
 class ActivityLog(db.Model):
@@ -238,23 +258,29 @@ def ensure_admin_from_env():
     return True
 
 
-def _ensure_attempt_column():
-    """Add Paper.attempt_json to databases created before the choice feature.
-    Fresh databases already get the column from create_all()."""
+def _ensure_column(table, column, ddl):
+    """Add a column to an existing database if it is missing (databases
+    created before the column existed). Fresh databases get it from create_all()."""
     try:
         from sqlalchemy import text as _text
-        cols = [r[1] for r in db.session.execute(_text("PRAGMA table_info(paper)"))]
-        if "attempt_json" not in cols:
-            db.session.execute(_text("ALTER TABLE paper ADD COLUMN attempt_json TEXT DEFAULT '{}'"))
+        cols = [r[1] for r in db.session.execute(_text(f"PRAGMA table_info({table})"))]
+        if column not in cols:
+            db.session.execute(_text(f"ALTER TABLE {table} ADD COLUMN {ddl}"))
             db.session.commit()
     except Exception:
         db.session.rollback()
         try:
             from sqlalchemy import text as _text2
-            db.session.execute(_text2("ALTER TABLE paper ADD COLUMN IF NOT EXISTS attempt_json TEXT DEFAULT '{}'"))
+            db.session.execute(_text2(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {ddl}"))
             db.session.commit()
         except Exception:
             db.session.rollback()
+
+
+def _ensure_columns():
+    _ensure_column("paper", "attempt_json", "attempt_json TEXT DEFAULT '{}'")
+    _ensure_column("paper", "sections_json", "sections_json TEXT DEFAULT '[]'")
+    _ensure_column("question", "format", "format VARCHAR(30) DEFAULT 'General'")
 
 
 def _total_with_attempts(questions, attempts):
@@ -271,9 +297,22 @@ def _total_with_attempts(questions, attempts):
     return total
 
 
+def _paper_total(questions, attempts, sections):
+    """Full paper total: fixed-type questions (attempt counts) plus each
+    custom section (its own attempt count, or all its questions)."""
+    total = _total_with_attempts([q for q in questions if not q.get("section")],
+                                 attempts)
+    for sec in (sections or []):
+        items = [q for q in questions if q.get("section") == sec.get("title")]
+        n = sec.get("attempt") or len(items)
+        n = max(0, min(int(n), len(items)))
+        total += sum(item["marks"] for item in items[:n])
+    return total
+
+
 def init_db():
     db.create_all()
-    _ensure_attempt_column()
+    _ensure_columns()
     ensure_admin_from_env()
     try:
         from seed import seed_all
@@ -640,18 +679,20 @@ def list_questions():
     chid = request.args.get("chapter_id", type=int)
     qt = request.args.get("qtype")
     src = request.args.get("source")
+    fmt = request.args.get("format")
     if cid: q = q.filter_by(class_level_id=cid)
     if sid: q = q.filter_by(subject_id=sid)
     if chid: q = q.filter_by(chapter_id=chid)
     if qt in QTYPES: q = q.filter_by(qtype=qt)
     if src in SOURCES: q = q.filter_by(source=src)
+    if fmt in FORMATS: q = q.filter_by(format=fmt)
     questions = q.order_by(Question.created_at.desc()).limit(300).all()
     classes = ClassLevel.query.order_by(ClassLevel.sort_order).all()
     subjects = Subject.query.all()
     chapters = Chapter.query.all()
     return render_template("questions.html", questions=questions, classes=classes,
-                           subjects=subjects, chapters=chapters,
-                           sel=dict(cid=cid, sid=sid, chid=chid, qt=qt, src=src))
+                           subjects=subjects, chapters=chapters, formats=FORMATS,
+                           sel=dict(cid=cid, sid=sid, chid=chid, qt=qt, src=src, fmt=fmt))
 
 
 @app.route("/questions/new", methods=["GET", "POST"])
@@ -667,7 +708,8 @@ def question_new():
             return redirect(url_for("list_questions"))
     classes = ClassLevel.query.order_by(ClassLevel.sort_order).all()
     return render_template("question_form.html", q=None, classes=classes,
-                           subjects=Subject.query.all(), chapters=Chapter.query.all())
+                           subjects=Subject.query.all(), chapters=Chapter.query.all(),
+                           formats=FORMATS)
 
 
 @app.route("/questions/<int:qid>/edit", methods=["GET", "POST"])
@@ -684,7 +726,8 @@ def question_edit(qid):
             return redirect(url_for("list_questions"))
     classes = ClassLevel.query.order_by(ClassLevel.sort_order).all()
     return render_template("question_form.html", q=q, classes=classes,
-                           subjects=Subject.query.all(), chapters=Chapter.query.all())
+                           subjects=Subject.query.all(), chapters=Chapter.query.all(),
+                           formats=FORMATS)
 
 
 def _save_question(q, form):
@@ -693,6 +736,9 @@ def _save_question(q, form):
     chid = form.get("chapter_id", type=int)
     qtype = form.get("qtype")
     source = form.get("source")
+    fmt = (form.get("format") or "General").strip()
+    if fmt not in FORMATS:
+        fmt = "General"
     text = (form.get("text") or "").strip()
     difficulty = form.get("difficulty") or "Medium"
     marks = form.get("marks", type=int) or 1
@@ -705,6 +751,7 @@ def _save_question(q, form):
         db.session.add(q)
     q.class_level_id, q.subject_id, q.chapter_id = cid, sid, chid
     q.qtype, q.source, q.text = qtype, source, text
+    q.format = fmt
     q.difficulty, q.marks = difficulty, marks
     q.answer = (form.get("answer") or "").strip()
     if qtype == "MCQ":
@@ -738,13 +785,14 @@ def question_delete(qid):
 # Correct Option | Answer
 # Type: MCQ / Short / Long / Numerical. Source: Theory / Exercise.
 IMPORT_COLUMNS = ["Class", "Subject", "Chapter", "Chapter No", "Type", "Source",
-                  "Difficulty", "Marks", "Question", "Option A", "Option B",
+                  "Format", "Difficulty", "Marks", "Question", "Option A", "Option B",
                   "Option C", "Option D", "Correct Option", "Answer"]
 IMPORT_HEADER_ALIASES = {
     "class": "Class", "subject": "Subject", "chapter": "Chapter",
     "chapter no": "Chapter No", "chapter number": "Chapter No", "ch no": "Chapter No",
     "type": "Type", "question type": "Type", "source": "Source",
-    "theory/exercise": "Source", "difficulty": "Difficulty", "level": "Difficulty",
+    "theory/exercise": "Source", "format": "Format", "question format": "Format",
+    "difficulty": "Difficulty", "level": "Difficulty",
     "marks": "Marks", "mark": "Marks", "question": "Question",
     "question text": "Question", "option a": "Option A", "option b": "Option B",
     "option c": "Option C", "option d": "Option D",
@@ -830,6 +878,11 @@ def _import_question_rows(rows):
         if source not in SOURCES:
             err(f"Source must be Theory or Exercise (got '{source}') — row skipped.")
             continue
+        fmt_raw = str(row.get("Format") or "General").strip()
+        fmt = next((f for f in FORMATS if f.lower() == fmt_raw.lower()), None)
+        if fmt is None:
+            err(f"Format must be one of {', '.join(FORMATS)} (got '{fmt_raw}') — row skipped.")
+            continue
         cls = _lookup(ClassLevel, cls_name)
         if not cls:
             err(f"Class '{cls_name}' does not exist — add it under Classes & Subjects first.")
@@ -864,7 +917,7 @@ def _import_question_rows(rows):
         except (TypeError, ValueError):
             marks = 1
         q = Question(class_level_id=cls.id, subject_id=subj.id, chapter_id=ch.id,
-                     qtype=qtype, source=source, text=text,
+                     qtype=qtype, source=source, text=text, format=fmt,
                      difficulty=difficulty, marks=max(marks, 0),
                      answer=str(row.get("Answer") or "").strip())
         if qtype == "MCQ":
@@ -924,12 +977,12 @@ def question_import_template():
     ws.title = "Questions"
     ws.append(IMPORT_COLUMNS)
     ws.append(["Class 9th", "Physics", "Physical Quantities and Measurement", 1,
-               "MCQ", "Theory", "Easy", 1,
+               "MCQ", "Theory", "General", "Easy", 1,
                "What is the SI unit of force?",
                "Newton", "Joule", "Watt", "Pascal", "A",
                "Newton — named after Isaac Newton."])
     ws.append(["Class 9th", "Physics", "Physical Quantities and Measurement", 1,
-               "Short", "Exercise", "Medium", 2,
+               "Short", "Exercise", "General", "Medium", 2,
                "Define a physical quantity and give two examples.",
                "", "", "", "", "",
                "A quantity that can be measured, e.g. length and mass."])
@@ -980,9 +1033,11 @@ def _chapter_ids_for_scope(scope, subject_id, chapter_ids):
     return [c.id for c in all_ch]
 
 
-def _pick_questions(chapter_ids, qtype, source, difficulty, n, exclude_ids):
+def _pick_questions(chapter_ids, qtype, source, difficulty, n, exclude_ids, fmt=None):
     q = Question.query.filter(Question.chapter_id.in_(chapter_ids),
                               Question.qtype == qtype, Question.source == source)
+    if fmt and fmt != "Any":
+        q = q.filter(Question.format == fmt)
     if difficulty in ("Easy", "Medium", "Hard"):
         q = q.filter_by(difficulty=difficulty)
     if exclude_ids:
@@ -990,6 +1045,15 @@ def _pick_questions(chapter_ids, qtype, source, difficulty, n, exclude_ids):
     pool = q.all()
     random.shuffle(pool)
     return pool[:n], len(pool)
+
+
+def _snapshot_question(qq, marks, section=""):
+    ch = db.session.get(Chapter, qq.chapter_id)
+    return {"id": qq.id, "text": qq.text, "qtype": qq.qtype,
+            "source": qq.source, "marks": marks,
+            "options": qq.options, "correct_option": qq.correct_option,
+            "answer": qq.answer or "", "chapter": ch.name if ch else "",
+            "format": qq.format or "General", "section": section}
 
 
 @app.route("/generator", methods=["GET", "POST"])
@@ -1018,25 +1082,55 @@ def generator():
         marks_per = {t: (request.form.get(f"marks_{t.lower()}", type=int)
                          or TYPE_MARKS_DEFAULT[t]) for t in QTYPES}
         selected, shortfalls = [], []
+        used = set()
         for qtype, f_th, f_ex in QTY_FIELDS:
             for source, field in (("Theory", f_th), ("Exercise", f_ex)):
                 n = request.form.get(field, type=int) or 0
                 if n <= 0:
                     continue
-                picked, avail = _pick_questions(ch_ids, qtype, source, difficulty, n, set())
+                picked, avail = _pick_questions(ch_ids, qtype, source, difficulty, n, used)
                 if len(picked) < n:
                     shortfalls.append(f"{TYPE_LABEL[qtype]} — {source}: asked {n}, only {avail} available")
                 for qq in picked:
-                    ch = db.session.get(Chapter, qq.chapter_id)
-                    selected.append({"id": qq.id, "text": qq.text, "qtype": qq.qtype,
-                                     "source": qq.source, "marks": marks_per[qq.qtype],
-                                     "options": qq.options, "correct_option": qq.correct_option,
-                                     "answer": qq.answer or "",
-                                     "chapter": ch.name if ch else ""})
+                    selected.append(_snapshot_question(qq, marks_per[qq.qtype]))
+                    used.add(qq.id)
+        # Custom "Add Section" blocks, e.g. Essay / Tashreeh / Translation.
+        section_metas, preset_sections = [], []
+        i = 0
+        while f"sec_title_{i}" in request.form:
+            sec_title = (request.form.get(f"sec_title_{i}") or "").strip()
+            qtype = request.form.get(f"sec_qtype_{i}") or "Long"
+            fmt = request.form.get(f"sec_format_{i}") or "Any"
+            n_th = request.form.get(f"sec_theory_{i}", type=int) or 0
+            n_ex = request.form.get(f"sec_exercise_{i}", type=int) or 0
+            marks = request.form.get(f"sec_marks_{i}", type=int) or TYPE_MARKS_DEFAULT.get(qtype, 5)
+            attempt = request.form.get(f"sec_attempt_{i}", type=int) or 0
+            preset_sections.append({"title": sec_title, "qtype": qtype, "format": fmt,
+                                    "theory": n_th, "exercise": n_ex,
+                                    "marks": marks, "attempt": attempt})
+            i += 1
+            if not sec_title or qtype not in QTYPES:
+                continue
+            meta = {"title": sec_title, "qtype": qtype,
+                    "format": fmt if fmt in FORMATS else "Any",
+                    "theory": n_th, "exercise": n_ex, "marks": marks,
+                    "attempt": attempt or None}
+            section_metas.append(meta)
+            for source, n in (("Theory", n_th), ("Exercise", n_ex)):
+                if n <= 0:
+                    continue
+                picked, avail = _pick_questions(ch_ids, qtype, source, difficulty,
+                                                n, used, meta["format"])
+                if len(picked) < n:
+                    shortfalls.append(f"{sec_title} — {source}: asked {n}, only {avail} available")
+                for qq in picked:
+                    selected.append(_snapshot_question(qq, marks, section=sec_title))
+                    used.add(qq.id)
         if shortfalls and not allow_short:
             # Do NOT silently make a short paper: show the warning and ask to confirm.
-            return render_template("generator.html", classes=classes,
-                                   shortfalls=shortfalls, form_data=request.form)
+            return render_template("generator.html", classes=classes, formats=FORMATS,
+                                   shortfalls=shortfalls, form_data=request.form,
+                                   preset_sections=preset_sections)
         # "Attempt any N out of M" choice, per question type (e.g. Short: any 5 of 8).
         attempts = {}
         for qtype in QTYPES:
@@ -1044,19 +1138,27 @@ def generator():
             if a:
                 attempts[qtype] = a
         for qtype, n in attempts.items():
-            have = sum(1 for q in selected if q["qtype"] == qtype)
+            have = sum(1 for q in selected if q["qtype"] == qtype and not q.get("section"))
             if n > have:
                 flash(f"Attempt any {n} for {TYPE_LABEL[qtype]} is more than the {have} questions in that section — lower it or add more questions first.", "error")
-                return render_template("generator.html", classes=classes, form_data=request.form)
-        total = _total_with_attempts(selected, attempts)
+                return render_template("generator.html", classes=classes, formats=FORMATS,
+                                       form_data=request.form, preset_sections=preset_sections)
+        for sec in section_metas:
+            have = sum(1 for q in selected if q.get("section") == sec["title"])
+            if sec["attempt"] and sec["attempt"] > have:
+                flash(f"Section '{sec['title']}': attempt any {sec['attempt']} is more than the {have} questions in that section — lower it or add more questions first.", "error")
+                return render_template("generator.html", classes=classes, formats=FORMATS,
+                                       form_data=request.form, preset_sections=preset_sections)
+        total = _paper_total(selected, attempts, section_metas)
         if not selected:
             flash("No questions selected — set at least one quantity above 0.", "error")
-            return render_template("generator.html", classes=classes)
+            return render_template("generator.html", classes=classes, formats=FORMATS)
         paper = Paper(title=title, teacher_id=current_user.id, class_level_id=cid,
                       subject_id=sid, variant=variant, total_marks=total,
                       duration_minutes=duration, instructions=instructions,
                       paper_date=paper_date, questions_json=json.dumps(selected),
-                      attempt_json=json.dumps(attempts))
+                      attempt_json=json.dumps(attempts),
+                      sections_json=json.dumps(section_metas))
         db.session.add(paper)
         db.session.commit()
         log_activity("paper_generated", f"{title} ({total} marks)")
@@ -1065,7 +1167,8 @@ def generator():
         else:
             flash("Paper generated successfully.", "success")
         return redirect(url_for("paper_view", pid=paper.id))
-    return render_template("generator.html", classes=classes)
+    return render_template("generator.html", classes=classes, formats=FORMATS,
+                           preset_sections=[])
 
 
 @app.route("/generator/variant/<int:pid>", methods=["POST"])
@@ -1081,9 +1184,10 @@ def paper_variant(pid):
     ch_ids = list({db.session.get(Question, q["id"]).chapter_id
                    for q in orig_qs if db.session.get(Question, q["id"])})
     new_qs, total = [], 0
+    fixed_qs = [q for q in orig_qs if not q.get("section")]
     for qtype in QTYPES:
         for source in SOURCES:
-            bucket = [q for q in orig_qs if q["qtype"] == qtype and q["source"] == source]
+            bucket = [q for q in fixed_qs if q["qtype"] == qtype and q["source"] == source]
             if not bucket:
                 continue
             picked, _ = _pick_questions(ch_ids, qtype, source, "Mixed", len(bucket), used_ids)
@@ -1091,22 +1195,35 @@ def paper_variant(pid):
             chosen = picked if len(picked) == len(bucket) else bucket
             for qq in chosen:
                 if isinstance(qq, Question):
-                    ch = db.session.get(Chapter, qq.chapter_id)
-                    new_qs.append({"id": qq.id, "text": qq.text, "qtype": qq.qtype,
-                                   "source": qq.source, "marks": bucket[0]["marks"],
-                                   "options": qq.options, "correct_option": qq.correct_option,
-                                   "answer": qq.answer or "",
-                                   "chapter": ch.name if ch else ""})
+                    new_qs.append(_snapshot_question(qq, bucket[0]["marks"]))
                 else:
                     new_qs.append(qq)
-    total = _total_with_attempts(new_qs, orig.attempts)
+    # Custom sections: re-pick within each section's own format/counts.
+    for sec in orig.sections:
+        for source, n in (("Theory", sec.get("theory") or 0),
+                          ("Exercise", sec.get("exercise") or 0)):
+            if n <= 0:
+                continue
+            bucket = [q for q in orig_qs if q.get("section") == sec["title"]
+                      and q["source"] == source]
+            picked, _ = _pick_questions(ch_ids, sec["qtype"], source, "Mixed",
+                                        n, used_ids, sec.get("format") or "Any")
+            chosen = picked if len(picked) == n else [q for q in bucket]
+            for qq in chosen:
+                if isinstance(qq, Question):
+                    new_qs.append(_snapshot_question(qq, sec["marks"], section=sec["title"]))
+                    used_ids.add(qq.id)
+                else:
+                    new_qs.append(qq)
+    total = _paper_total(new_qs, orig.attempts, orig.sections)
     paper = Paper(title=orig.title, teacher_id=orig.teacher_id,
                   class_level_id=orig.class_level_id, subject_id=orig.subject_id,
                   variant=variant, total_marks=total,
                   duration_minutes=orig.duration_minutes,
                   instructions=orig.instructions, paper_date=orig.paper_date,
                   questions_json=json.dumps(new_qs),
-                  attempt_json=json.dumps(orig.attempts))
+                  attempt_json=json.dumps(orig.attempts),
+                  sections_json=json.dumps(orig.sections))
     db.session.add(paper)
     db.session.commit()
     flash(f"Paper {variant} created with a different question selection.", "success")
@@ -1145,7 +1262,7 @@ def paper_edit(pid):
                 q["marks"] = request.form.get(f"marks_{i}", type=int) or q["marks"]
                 new_qs.append(q)
             p.questions_json = json.dumps(new_qs)
-            p.total_marks = _total_with_attempts(new_qs, p.attempts)
+            p.total_marks = _paper_total(new_qs, p.attempts, p.sections)
             db.session.commit()
             flash("Paper saved.", "success")
             return redirect(url_for("paper_view", pid=p.id))
@@ -1154,7 +1271,7 @@ def paper_edit(pid):
             if 0 <= idx < len(qs):
                 qs.pop(idx)
                 p.questions_json = json.dumps(qs)
-                p.total_marks = _total_with_attempts(qs, p.attempts)
+                p.total_marks = _paper_total(qs, p.attempts, p.sections)
                 db.session.commit()
                 flash("Question removed.", "success")
         elif action == "move":
@@ -1176,13 +1293,11 @@ def paper_edit(pid):
                 pool_ids = [orig.chapter_id] if orig else ch_ids
                 used = {q["id"] for q in qs}
                 picked, _ = _pick_questions(pool_ids, old["qtype"], old["source"],
-                                            "Mixed", 1, used)
+                                            "Mixed", 1, used, old.get("format") or "Any")
                 if picked:
                     qq = picked[0]
-                    qs[idx] = {"id": qq.id, "text": qq.text, "qtype": qq.qtype,
-                               "source": qq.source, "marks": old["marks"],
-                               "options": qq.options, "correct_option": qq.correct_option,
-                               "answer": qq.answer or "", "chapter": old.get("chapter", "")}
+                    qs[idx] = _snapshot_question(qq, old["marks"],
+                                                 section=old.get("section", ""))
                     p.questions_json = json.dumps(qs)
                     db.session.commit()
                     flash("Question replaced.", "success")
@@ -1201,7 +1316,8 @@ def paper_duplicate(pid):
                  variant=p.variant, total_marks=p.total_marks,
                  duration_minutes=p.duration_minutes, instructions=p.instructions,
                  paper_date=p.paper_date, questions_json=p.questions_json,
-                 attempt_json=json.dumps(p.attempts))
+                 attempt_json=json.dumps(p.attempts),
+                 sections_json=json.dumps(p.sections))
     db.session.add(copy)
     db.session.commit()
     flash("Paper copied.", "success")
@@ -1304,7 +1420,8 @@ def _paper_pdf(pid, answer_key=False):
     story.append(Spacer(1, 4 * mm))
     grouped = {}
     for qq in p.questions:
-        grouped.setdefault(qq["qtype"], []).append(qq)
+        if not qq.get("section"):
+            grouped.setdefault(qq["qtype"], []).append(qq)
     attempts = p.attempts
     n = 0
     for qtype in QTYPES:
@@ -1320,6 +1437,28 @@ def _paper_pdf(pid, answer_key=False):
             n += 1
             story.append(Paragraph(f"Q{n}. {qq['text']} &nbsp; <b>[{qq['marks']} marks]</b>", body))
             if qtype == "MCQ" and qq.get("options"):
+                for letter, opt in zip("ABCD", qq["options"]):
+                    story.append(Paragraph(f"&nbsp;&nbsp;&nbsp;({letter}) {opt}", body))
+                if answer_key:
+                    story.append(Paragraph(f"&nbsp;&nbsp;&nbsp;<b>Answer: ({qq.get('correct_option', '')})</b>", body))
+            elif answer_key and qq.get("answer"):
+                story.append(Paragraph(f"&nbsp;&nbsp;&nbsp;<b>Answer:</b> {qq['answer']}", body))
+            story.append(Spacer(1, 2 * mm))
+        story.append(Spacer(1, 2 * mm))
+    # Custom sections (Essay, Tashreeh, ...) in the order they were added.
+    for sec in p.sections:
+        items = [q for q in p.questions if q.get("section") == sec["title"]]
+        if not items:
+            continue
+        heading = f"Section: {sec['title']}"
+        if sec.get("attempt"):
+            heading += f" — Attempt any {sec['attempt']} out of {len(items)}"
+        story.append(Paragraph(heading, bold))
+        story.append(Spacer(1, 2 * mm))
+        for qq in items:
+            n += 1
+            story.append(Paragraph(f"Q{n}. {qq['text']} &nbsp; <b>[{qq['marks']} marks]</b>", body))
+            if qq["qtype"] == "MCQ" and qq.get("options"):
                 for letter, opt in zip("ABCD", qq["options"]):
                     story.append(Paragraph(f"&nbsp;&nbsp;&nbsp;({letter}) {opt}", body))
                 if answer_key:

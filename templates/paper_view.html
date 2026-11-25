@@ -17,8 +17,15 @@ Date: {{ paper.paper_date }} · Time: {{ paper.duration_minutes }} minutes · To
 </div>
 {% set ns = namespace(n=0) %}
 {% for qtype in ['MCQ','Short','Long','Numerical'] %}
-{% set items = paper.questions | selectattr('qtype','equalto',qtype) | list %}
+{% set items = paper.questions | selectattr('qtype','equalto',qtype) | rejectattr('section') | list %}
 {% if items %}<div class="card"><h2>{{ {'MCQ':'MCQs','Short':'Short Questions','Long':'Long Questions','Numerical':'Numericals'}[qtype] }}{% if paper.attempts.get(qtype) %} — Attempt any {{ paper.attempts[qtype] }} out of {{ items|length }}{% endif %}</h2>
+{% for q in items %}{% set ns.n = ns.n + 1 %}
+<div class="qbox"><b>Q{{ ns.n }}.</b> {{ q.text }} <b>[{{ q.marks }} marks]</b> <span class="muted">({{ q.source }} · {{ q.chapter }})</span>
+{% if q.options %}<ol type="A">{% for o in q.options %}<li>{{ o }}</li>{% endfor %}</ol>{% endif %}</div>
+{% endfor %}</div>{% endif %}{% endfor %}
+{% for sec in paper.sections %}
+{% set items = paper.questions | selectattr('section','equalto',sec.title) | list %}
+{% if items %}<div class="card"><h2>{{ sec.title }}{% if sec.attempt %} — Attempt any {{ sec.attempt }} out of {{ items|length }}{% endif %}</h2>
 {% for q in items %}{% set ns.n = ns.n + 1 %}
 <div class="qbox"><b>Q{{ ns.n }}.</b> {{ q.text }} <b>[{{ q.marks }} marks]</b> <span class="muted">({{ q.source }} · {{ q.chapter }})</span>
 {% if q.options %}<ol type="A">{% for o in q.options %}<li>{{ o }}</li>{% endfor %}</ol>{% endif %}</div>

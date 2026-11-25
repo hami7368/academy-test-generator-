@@ -175,6 +175,80 @@ def test_attempt_any_choice_total_and_pdf():
         assert appmod.Paper.query.filter_by(title="Bad Choice Paper").first() is None
 
 
+def test_custom_section_essay_with_choice_and_variant():
+    """Add Section: an Essay section (3 Long Essay questions, attempt any 1)
+    sits beside the normal MCQs; totals, view, PDF and variant all keep it."""
+    c = make_client()
+    login(c, "admin@test.com", "AdminPass123")
+    with appmod.app.app_context():
+        cl = appmod.ClassLevel.query.filter_by(name="Class 9th").first()
+        subj = appmod.Subject.query.filter_by(name="English", class_level_id=cl.id).first()
+        ch = appmod.Chapter.query.filter_by(subject_id=subj.id).order_by(appmod.Chapter.number).first()
+        for i, topic in enumerate(["My Best Friend", "A Visit to a Museum", "My Aim in Life"]):
+            r = c.post("/questions/new", data={
+                "class_level_id": cl.id, "subject_id": subj.id, "chapter_id": ch.id,
+                "qtype": "Long", "source": "Theory", "format": "Essay",
+                "text": f"Write an essay on {topic}.", "difficulty": "Medium",
+                "marks": 10, "answer": f"Outline for {topic}."}, follow_redirects=True)
+            assert b"Question added" in r.data
+        assert appmod.Question.query.filter_by(format="Essay").count() == 3
+    login(c, "teacher@test.com", "TeachPass123")
+    with appmod.app.app_context():
+        cl = appmod.ClassLevel.query.filter_by(name="Class 9th").first()
+        subj = appmod.Subject.query.filter_by(name="English", class_level_id=cl.id).first()
+        data = {"title": "English Section Paper", "class_level_id": cl.id,
+                "subject_id": subj.id, "scope": "full", "difficulty": "Mixed",
+                "duration_minutes": 60, "paper_date": "2026-11-25", "variant": "A",
+                "mcq_theory": 2, "mcq_exercise": 0, "short_theory": 0,
+                "short_exercise": 0, "long_theory": 0, "long_exercise": 0,
+                "num_theory": 0, "num_exercise": 0,
+                "marks_mcq": 1, "marks_short": 2, "marks_long": 5, "marks_numerical": 4,
+                "sec_title_0": "Essay", "sec_qtype_0": "Long", "sec_format_0": "Essay",
+                "sec_theory_0": 3, "sec_exercise_0": 0, "sec_marks_0": 10,
+                "sec_attempt_0": 1, "instructions": "Attempt all questions."}
+        r = c.post("/generator", data=data, follow_redirects=True)
+        assert b"English Section Paper" in r.data
+        paper = appmod.Paper.query.filter_by(title="English Section Paper").first()
+        assert paper is not None
+        assert paper.sections == [{"title": "Essay", "qtype": "Long", "format": "Essay",
+                                   "theory": 3, "exercise": 0, "marks": 10, "attempt": 1}]
+        assert len(paper.questions) == 5  # 2 MCQ + 3 Essay topics
+        # total: 2 MCQ x 1 + attempt 1 Essay x 10 = 12
+        assert paper.total_marks == 12, paper.total_marks
+        assert b"Attempt any 1 out of 3" in r.data
+        pdf = c.get(f"/papers/{paper.id}/pdf")
+        assert pdf.status_code == 200 and pdf.data[:4] == b"%PDF"
+        # variant keeps the section and the total
+        r2 = c.post(f"/generator/variant/{paper.id}", data={"variant": "B"},
+                    follow_redirects=True)
+        assert b"Paper B created" in r2.data
+        var = appmod.Paper.query.filter_by(title="English Section Paper",
+                                           variant="B").first()
+        assert var is not None and var.sections == paper.sections
+        assert var.total_marks == 12
+
+
+def test_excel_import_format_column():
+    import io as _io
+    from openpyxl import Workbook
+    c = make_client()
+    login(c, "admin@test.com", "AdminPass123")
+    wb = Workbook(); ws = wb.active
+    ws.append(["Class", "Subject", "Chapter", "Chapter No", "Type", "Source",
+               "Format", "Difficulty", "Marks", "Question", "Option A", "Option B",
+               "Option C", "Option D", "Correct Option", "Answer"])
+    ws.append(["Class 9th", "English", "Reading", 1, "Long", "Theory", "Essay",
+               "Medium", 10, "Write an essay on My School.", "", "", "", "", "",
+               "Outline: intro, building, teachers, conclusion."])
+    buf = _io.BytesIO(); wb.save(buf); buf.seek(0)
+    r = c.post("/admin/questions/import", data={"file": (buf, "essay.xlsx")},
+               content_type="multipart/form-data", follow_redirects=True)
+    assert b"1 of 1 questions imported" in r.data
+    with appmod.app.app_context():
+        q = appmod.Question.query.filter_by(text="Write an essay on My School.").first()
+        assert q is not None and q.format == "Essay"
+
+
 def test_excel_import_template_and_upload():
     import io as _io
     from openpyxl import Workbook, load_workbook

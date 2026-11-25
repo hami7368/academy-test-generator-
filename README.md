@@ -210,6 +210,24 @@ count only the 5 attempted (5 × 2 = 10, not 8 × 2). The choice is shown on the
 web preview and in the PDF, and is kept when you make a variant (A/B/C) or a
 copy. Attempt can never be more than the questions in that section.
 
+## Formats and custom sections ("Add Section")
+
+Some questions do not fit MCQ / Short / Long / Numerical — English essays,
+stories, applications, letters, translations, tenses, comprehension, and Urdu
+tashreeh, khulasa, mazmoon, darkhwast, tarjuma. Every question has a
+**Format** (General, Essay, Story, Application, Letter, Translation, Tenses,
+Comprehension, Tashreeh, Khulasa, Mazmoon, Darkhwast, Tarjuma):
+
+- Set it when adding a question (**Add Question → Format**), or in the Excel
+  sheet's **Format** column (blank = General).
+- On the Generate Paper page, click **+ Add Section** to add a named section
+  (e.g. "Essay"): pick its question type, its Format (or Any), Theory /
+  Exercise quantities, marks per question, and its own **Attempt any** choice
+  (e.g. 3 essay topics, attempt any 1). Add as many sections as the paper
+  needs; each prints under its own heading in the preview and the PDF, and
+  the total marks count only the attempted questions. Sections are kept when
+  you make a variant (A/B/C) or a copy.
+
 ## Add a teacher
 
 Admin Panel → **Teachers → Add Teacher** → enter the teacher's name, email and a

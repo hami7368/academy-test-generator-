@@ -39,6 +39,10 @@
 <label>Marks per {{ t }}: <input type="number" class="mpq" data-type="{{ t }}" name="marks_{{ t|lower }}" value="{{ m }}" min="1" style="width:80px"></label>
 </div>{% endfor %}
 </div>
+<h2>Custom sections — optional</h2>
+<p class="muted">Need an Essay, Tashreeh, Translation or any other part? Click <b>+ Add Section</b>, give it a title, and pick which questions it takes. Each section can have its own "Attempt any" choice.</p>
+<div id="sections"></div>
+<p><button type="button" class="btn btn-secondary" onclick="addSection()">+ Add Section</button></p>
 <p><b>Total marks: <span id="total">0</span></b> (calculated live; also checked on the server)</p>
 <label>Instructions for students</label><textarea name="instructions">Attempt all questions. Write your name and roll number clearly. No extra sheet will be provided.</textarea>
 <button type="submit">Generate Paper</button></form></div>
@@ -60,6 +64,37 @@ function total(){ let t=0;
     const att=card.querySelector('.attempt');
     let n=qty; if(att && +att.value>0) n=Math.min(+att.value, qty);
     t+=n*marks; });
+  document.querySelectorAll('[data-sec]').forEach(card=>{
+    const marks=+card.querySelector('.sec-marks').value||0;
+    let qty=0; card.querySelectorAll('.sec-qty').forEach(i=>qty+=(+i.value||0));
+    const att=card.querySelector('.sec-attempt');
+    let n=qty; if(att && +att.value>0) n=Math.min(+att.value, qty);
+    t+=n*marks; });
   document.getElementById('total').textContent=t; }
-document.querySelectorAll('.qty,.mpq,.attempt').forEach(i=>i.addEventListener('input',total)); total();
+document.getElementById('genform').addEventListener('input', total);
+// ---- Custom "Add Section" blocks ----
+const FORMATS = {{ formats|tojson }};
+const PRESET_SECTIONS = {{ preset_sections|tojson }};
+let secN = 0;
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+function addSection(p){
+  p = p || {title:'', qtype:'Long', format:'Any', theory:0, exercise:0, marks:5, attempt:''};
+  const i = secN++;
+  const d = document.createElement('div'); d.className='card'; d.dataset.sec='1';
+  const typeOpts = ['MCQ','Short','Long','Numerical'].map(t=>'<option'+(p.qtype===t?' selected':'')+'>'+t+'</option>').join('');
+  const fmtOpts = ['Any'].concat(FORMATS).map(f=>'<option'+(p.format===f?' selected':'')+'>'+f+'</option>').join('');
+  d.innerHTML = '<h3>Section</h3>'
+    + '<label>Section title: <input name="sec_title_'+i+'" value="'+esc(p.title)+'" placeholder="e.g. Essay"></label>'
+    + '<div class="row"><div><label>Question type</label><select name="sec_qtype_'+i+'">'+typeOpts+'</select></div>'
+    + '<div><label>Format</label><select name="sec_format_'+i+'">'+fmtOpts+'</select></div></div>'
+    + '<label>Theory: <input type="number" class="sec-qty" name="sec_theory_'+i+'" value="'+(p.theory||0)+'" min="0"> questions</label>'
+    + '<label>Exercise: <input type="number" class="sec-qty" name="sec_exercise_'+i+'" value="'+(p.exercise||0)+'" min="0"> questions</label>'
+    + '<label>Marks per question: <input type="number" class="sec-marks" name="sec_marks_'+i+'" value="'+(p.marks||5)+'" min="1" style="width:80px"></label>'
+    + '<label>Attempt any: <input type="number" class="sec-attempt" name="sec_attempt_'+i+'" value="'+(p.attempt||'')+'" min="0" placeholder="all" style="width:80px"> out of the above (blank = attempt all)</label>'
+    + '<p><button type="button" class="btn btn-secondary" onclick="this.closest(\'[data-sec]\').remove();total()">Remove section</button></p>';
+  document.getElementById('sections').appendChild(d);
+  total();
+}
+(PRESET_SECTIONS || []).forEach(addSection);
+total();
 </script>{% endblock %}
