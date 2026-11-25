@@ -63,6 +63,31 @@ SOURCES = ["Theory", "Exercise"]
 FORMATS = ["General", "Essay", "Story", "Application", "Letter", "Translation",
            "Tenses", "Comprehension", "Tashreeh", "Khulasa", "Mazmoon",
            "Darkhwast", "Tarjuma"]
+# Formats only make sense for their own subject: English shows Essay/Story/...,
+# Urdu shows Tashreeh/Khulasa/..., other subjects only General.
+FORMAT_GROUPS = {
+    "English": ["Essay", "Story", "Application", "Letter", "Translation",
+                "Tenses", "Comprehension"],
+    "Urdu": ["Tashreeh", "Khulasa", "Mazmoon", "Darkhwast", "Tarjuma"],
+}
+# Writing formats have no Theory/Exercise split — a section just asks for
+# "how many" (essay topics, ashaar for tashreeh, ...), picked from all sources.
+WRITING_FORMATS = set(FORMATS) - {"General"}
+FORMAT_QTYPE = {"Essay": "Long", "Story": "Long", "Application": "Long",
+                "Letter": "Long", "Mazmoon": "Long", "Darkhwast": "Long",
+                "Translation": "Short", "Tashreeh": "Short", "Khulasa": "Short",
+                "Tarjuma": "Short", "Comprehension": "Short", "Tenses": "Short"}
+FORMAT_MARKS = {"Essay": 10, "Story": 10, "Mazmoon": 10}
+
+
+def formats_for_subject(subject_name):
+    """Formats a subject may use: General plus its own group's formats."""
+    name = (subject_name or "").lower()
+    out = ["General"]
+    for key, fmts in FORMAT_GROUPS.items():
+        if key.lower() in name:
+            out += fmts
+    return out
 DIFFICULTIES = ["Easy", "Medium", "Hard"]
 ALLOWED_EXT = {"pdf"}
 
@@ -1035,7 +1060,9 @@ def _chapter_ids_for_scope(scope, subject_id, chapter_ids):
 
 def _pick_questions(chapter_ids, qtype, source, difficulty, n, exclude_ids, fmt=None):
     q = Question.query.filter(Question.chapter_id.in_(chapter_ids),
-                              Question.qtype == qtype, Question.source == source)
+                              Question.qtype == qtype)
+    if source:  # None = any source (writing formats have no Theory/Exercise split)
+        q = q.filter(Question.source == source)
     if fmt and fmt != "Any":
         q = q.filter(Question.format == fmt)
     if difficulty in ("Easy", "Medium", "Hard"):
@@ -1095,40 +1122,64 @@ def generator():
                     selected.append(_snapshot_question(qq, marks_per[qq.qtype]))
                     used.add(qq.id)
         # Custom "Add Section" blocks, e.g. Essay / Tashreeh / Translation.
+        # Writing formats (Essay, Tashreeh, ...) have no Theory/Exercise split:
+        # they ask for one quantity, picked from all sources, and only from
+        # the chapters ticked for that section (all chapters if none ticked).
         section_metas, preset_sections = [], []
-        i = 0
-        while f"sec_title_{i}" in request.form:
+        for i in range(50):  # indices can skip if a middle section was removed
+            if f"sec_title_{i}" not in request.form:
+                continue
             sec_title = (request.form.get(f"sec_title_{i}") or "").strip()
-            qtype = request.form.get(f"sec_qtype_{i}") or "Long"
             fmt = request.form.get(f"sec_format_{i}") or "Any"
+            qtype = request.form.get(f"sec_qtype_{i}") or FORMAT_QTYPE.get(fmt, "Long")
             n_th = request.form.get(f"sec_theory_{i}", type=int) or 0
             n_ex = request.form.get(f"sec_exercise_{i}", type=int) or 0
-            marks = request.form.get(f"sec_marks_{i}", type=int) or TYPE_MARKS_DEFAULT.get(qtype, 5)
-            attempt = request.form.get(f"sec_attempt_{i}", type=int) or 0
+            qty = request.form.get(f"sec_qty_{i}", type=int) or 0
+            marks = (request.form.get(f"sec_marks_{i}", type=int)
+                     or FORMAT_MARKS.get(fmt)
+                     or TYPE_MARKS_DEFAULT.get(qtype, 5))
+            choice = request.form.get(f"sec_choice_{i}") == "1"
+            attempt = (request.form.get(f"sec_attempt_{i}", type=int) or 0) if choice else 0
+            note = (request.form.get(f"sec_note_{i}") or "").strip()
+            ch_sel = [int(x) for x in request.form.getlist(f"sec_chapters_{i}")
+                      if str(x).isdigit()]
+            sec_ch_ids = ch_sel or ch_ids
             preset_sections.append({"title": sec_title, "qtype": qtype, "format": fmt,
-                                    "theory": n_th, "exercise": n_ex,
-                                    "marks": marks, "attempt": attempt})
-            i += 1
+                                    "theory": n_th, "exercise": n_ex, "qty": qty,
+                                    "marks": marks, "attempt": attempt,
+                                    "choice": 1 if choice else 0,
+                                    "note": note, "chapters": ch_sel})
             if not sec_title or qtype not in QTYPES:
                 continue
             meta = {"title": sec_title, "qtype": qtype,
                     "format": fmt if fmt in FORMATS else "Any",
-                    "theory": n_th, "exercise": n_ex, "marks": marks,
-                    "attempt": attempt or None}
+                    "theory": n_th, "exercise": n_ex, "qty": qty, "marks": marks,
+                    "attempt": attempt or None, "chapters": ch_sel, "note": note}
             section_metas.append(meta)
-            for source, n in (("Theory", n_th), ("Exercise", n_ex)):
-                if n <= 0:
+            if fmt in WRITING_FORMATS:
+                if qty <= 0:
                     continue
-                picked, avail = _pick_questions(ch_ids, qtype, source, difficulty,
-                                                n, used, meta["format"])
-                if len(picked) < n:
-                    shortfalls.append(f"{sec_title} — {source}: asked {n}, only {avail} available")
+                picked, avail = _pick_questions(sec_ch_ids, qtype, None, difficulty,
+                                                qty, used, meta["format"])
+                if len(picked) < qty:
+                    shortfalls.append(f"{sec_title}: asked {qty}, only {avail} available")
                 for qq in picked:
                     selected.append(_snapshot_question(qq, marks, section=sec_title))
                     used.add(qq.id)
+            else:
+                for source, n in (("Theory", n_th), ("Exercise", n_ex)):
+                    if n <= 0:
+                        continue
+                    picked, avail = _pick_questions(sec_ch_ids, qtype, source, difficulty,
+                                                    n, used, meta["format"])
+                    if len(picked) < n:
+                        shortfalls.append(f"{sec_title} — {source}: asked {n}, only {avail} available")
+                    for qq in picked:
+                        selected.append(_snapshot_question(qq, marks, section=sec_title))
+                        used.add(qq.id)
         if shortfalls and not allow_short:
             # Do NOT silently make a short paper: show the warning and ask to confirm.
-            return render_template("generator.html", classes=classes, formats=FORMATS,
+            return render_template("generator.html", classes=classes, formats=FORMATS, format_groups=FORMAT_GROUPS,
                                    shortfalls=shortfalls, form_data=request.form,
                                    preset_sections=preset_sections)
         # "Attempt any N out of M" choice, per question type (e.g. Short: any 5 of 8).
@@ -1141,18 +1192,19 @@ def generator():
             have = sum(1 for q in selected if q["qtype"] == qtype and not q.get("section"))
             if n > have:
                 flash(f"Attempt any {n} for {TYPE_LABEL[qtype]} is more than the {have} questions in that section — lower it or add more questions first.", "error")
-                return render_template("generator.html", classes=classes, formats=FORMATS,
+                return render_template("generator.html", classes=classes, formats=FORMATS, format_groups=FORMAT_GROUPS,
                                        form_data=request.form, preset_sections=preset_sections)
         for sec in section_metas:
             have = sum(1 for q in selected if q.get("section") == sec["title"])
             if sec["attempt"] and sec["attempt"] > have:
                 flash(f"Section '{sec['title']}': attempt any {sec['attempt']} is more than the {have} questions in that section — lower it or add more questions first.", "error")
-                return render_template("generator.html", classes=classes, formats=FORMATS,
+                return render_template("generator.html", classes=classes, formats=FORMATS, format_groups=FORMAT_GROUPS,
                                        form_data=request.form, preset_sections=preset_sections)
         total = _paper_total(selected, attempts, section_metas)
         if not selected:
             flash("No questions selected — set at least one quantity above 0.", "error")
-            return render_template("generator.html", classes=classes, formats=FORMATS)
+            return render_template("generator.html", classes=classes, formats=FORMATS,
+                                       format_groups=FORMAT_GROUPS)
         paper = Paper(title=title, teacher_id=current_user.id, class_level_id=cid,
                       subject_id=sid, variant=variant, total_marks=total,
                       duration_minutes=duration, instructions=instructions,
@@ -1167,7 +1219,7 @@ def generator():
         else:
             flash("Paper generated successfully.", "success")
         return redirect(url_for("paper_view", pid=paper.id))
-    return render_template("generator.html", classes=classes, formats=FORMATS,
+    return render_template("generator.html", classes=classes, formats=FORMATS, format_groups=FORMAT_GROUPS,
                            preset_sections=[])
 
 
@@ -1198,15 +1250,29 @@ def paper_variant(pid):
                     new_qs.append(_snapshot_question(qq, bucket[0]["marks"]))
                 else:
                     new_qs.append(qq)
-    # Custom sections: re-pick within each section's own format/counts.
+    # Custom sections: re-pick within each section's own format/counts/chapters.
     for sec in orig.sections:
+        sec_ch = sec.get("chapters") or ch_ids
+        if sec.get("qty"):
+            n = sec["qty"]
+            picked, _ = _pick_questions(sec_ch, sec["qtype"], None, "Mixed",
+                                        n, used_ids, sec.get("format") or "Any")
+            chosen = picked if len(picked) == n else [q for q in orig_qs
+                                                     if q.get("section") == sec["title"]]
+            for qq in chosen:
+                if isinstance(qq, Question):
+                    new_qs.append(_snapshot_question(qq, sec["marks"], section=sec["title"]))
+                    used_ids.add(qq.id)
+                else:
+                    new_qs.append(qq)
+            continue
         for source, n in (("Theory", sec.get("theory") or 0),
                           ("Exercise", sec.get("exercise") or 0)):
             if n <= 0:
                 continue
             bucket = [q for q in orig_qs if q.get("section") == sec["title"]
                       and q["source"] == source]
-            picked, _ = _pick_questions(ch_ids, sec["qtype"], source, "Mixed",
+            picked, _ = _pick_questions(sec_ch, sec["qtype"], source, "Mixed",
                                         n, used_ids, sec.get("format") or "Any")
             chosen = picked if len(picked) == n else [q for q in bucket]
             for qq in chosen:
@@ -1454,6 +1520,8 @@ def _paper_pdf(pid, answer_key=False):
         if sec.get("attempt"):
             heading += f" — Attempt any {sec['attempt']} out of {len(items)}"
         story.append(Paragraph(heading, bold))
+        if sec.get("note"):
+            story.append(Paragraph(f"<i>{sec['note']}</i>", body))
         story.append(Spacer(1, 2 * mm))
         for qq in items:
             n += 1

@@ -218,15 +218,24 @@ tashreeh, khulasa, mazmoon, darkhwast, tarjuma. Every question has a
 **Format** (General, Essay, Story, Application, Letter, Translation, Tenses,
 Comprehension, Tashreeh, Khulasa, Mazmoon, Darkhwast, Tarjuma):
 
-- Set it when adding a question (**Add Question → Format**), or in the Excel
-  sheet's **Format** column (blank = General).
-- On the Generate Paper page, click **+ Add Section** to add a named section
-  (e.g. "Essay"): pick its question type, its Format (or Any), Theory /
-  Exercise quantities, marks per question, and its own **Attempt any** choice
-  (e.g. 3 essay topics, attempt any 1). Add as many sections as the paper
-  needs; each prints under its own heading in the preview and the PDF, and
-  the total marks count only the attempted questions. Sections are kept when
-  you make a variant (A/B/C) or a copy.
+- Set it when adding a question (**Add Question → Format** — the list only
+  shows the formats for that subject: English shows Essay/Story/...,
+  Urdu shows Tashreeh/Khulasa/..., other subjects only General), or in the
+  Excel sheet's **Format** column (blank = General).
+- On the Generate Paper page, click **+ Add Section**. First choose **what to
+  add** (Essay, Story, Tashreeh, ... — again only that subject's formats):
+  the section title, question type and marks fill in themselves, and you can
+  change them. Essay / Tashreeh / Translation and the other writing formats
+  have **no Theory / Exercise** — just say **how many** (e.g. 3 essay topics).
+  Tick **"Give choice in this section"** to make it "Attempt any N out of M"
+  (unticked = every question is compulsory). You can also write section
+  instructions (e.g. "Write an essay on any ONE of the following topics").
+- **Each section has its own chapters**: tick only the chapters it should
+  draw from (all ticked = whole book). That is how a full-book test gets two
+  Short sections from different chapters, or a Tashreeh section from one
+  ghazal's chapter. Sections print under their own headings in the preview
+  and the PDF, the total marks count only the attempted questions, and
+  sections are kept when you make a variant (A/B/C) or a copy.
 
 ## Add a teacher
 

@@ -191,7 +191,14 @@ def test_custom_section_essay_with_choice_and_variant():
                 "text": f"Write an essay on {topic}.", "difficulty": "Medium",
                 "marks": 10, "answer": f"Outline for {topic}."}, follow_redirects=True)
             assert b"Question added" in r.data
-        assert appmod.Question.query.filter_by(format="Essay").count() == 3
+        # one more essay saved as Exercise — writing sections ignore Theory/Exercise
+        r = c.post("/questions/new", data={
+            "class_level_id": cl.id, "subject_id": subj.id, "chapter_id": ch.id,
+            "qtype": "Long", "source": "Exercise", "format": "Essay",
+            "text": "Write an essay on My School.", "difficulty": "Medium",
+            "marks": 10, "answer": "Outline for My School."}, follow_redirects=True)
+        assert b"Question added" in r.data
+        assert appmod.Question.query.filter_by(format="Essay").count() == 4
     login(c, "teacher@test.com", "TeachPass123")
     with appmod.app.app_context():
         cl = appmod.ClassLevel.query.filter_by(name="Class 9th").first()
@@ -204,14 +211,17 @@ def test_custom_section_essay_with_choice_and_variant():
                 "num_theory": 0, "num_exercise": 0,
                 "marks_mcq": 1, "marks_short": 2, "marks_long": 5, "marks_numerical": 4,
                 "sec_title_0": "Essay", "sec_qtype_0": "Long", "sec_format_0": "Essay",
-                "sec_theory_0": 3, "sec_exercise_0": 0, "sec_marks_0": 10,
-                "sec_attempt_0": 1, "instructions": "Attempt all questions."}
+                "sec_qty_0": 3, "sec_marks_0": 10, "sec_choice_0": "1",
+                "sec_attempt_0": 1, "sec_note_0": "Write an essay on any ONE topic.",
+                "instructions": "Attempt all questions."}
         r = c.post("/generator", data=data, follow_redirects=True)
         assert b"English Section Paper" in r.data
         paper = appmod.Paper.query.filter_by(title="English Section Paper").first()
         assert paper is not None
         assert paper.sections == [{"title": "Essay", "qtype": "Long", "format": "Essay",
-                                   "theory": 3, "exercise": 0, "marks": 10, "attempt": 1}]
+                                   "theory": 0, "exercise": 0, "qty": 3, "marks": 10,
+                                   "attempt": 1, "chapters": [],
+                                   "note": "Write an essay on any ONE topic."}]
         assert len(paper.questions) == 5  # 2 MCQ + 3 Essay topics
         # total: 2 MCQ x 1 + attempt 1 Essay x 10 = 12
         assert paper.total_marks == 12, paper.total_marks
@@ -226,6 +236,51 @@ def test_custom_section_essay_with_choice_and_variant():
                                            variant="B").first()
         assert var is not None and var.sections == paper.sections
         assert var.total_marks == 12
+
+
+def test_two_short_sections_from_different_chapters():
+    """Two Short sections, each limited to its own chapter (full-book test
+    with chapter-wise Short sections). Formats are subject-aware."""
+    assert appmod.formats_for_subject("English") == [
+        "General", "Essay", "Story", "Application", "Letter", "Translation",
+        "Tenses", "Comprehension"]
+    assert appmod.formats_for_subject("Urdu") == [
+        "General", "Tashreeh", "Khulasa", "Mazmoon", "Darkhwast", "Tarjuma"]
+    assert appmod.formats_for_subject("Physics") == ["General"]
+    c = make_client()
+    login(c, "teacher@test.com", "TeachPass123")
+    with appmod.app.app_context():
+        cl = appmod.ClassLevel.query.filter_by(name="Class 9th").first()
+        subj = appmod.Subject.query.filter_by(name="Physics", class_level_id=cl.id).first()
+        chs = appmod.Chapter.query.filter_by(subject_id=subj.id).order_by(
+            appmod.Chapter.number).all()
+        ch1, ch2 = chs[0], chs[1]
+        data = {"title": "Chapterwise Short Paper", "class_level_id": cl.id,
+                "subject_id": subj.id, "scope": "full", "difficulty": "Mixed",
+                "duration_minutes": 60, "paper_date": "2026-11-25", "variant": "A",
+                "mcq_theory": 0, "mcq_exercise": 0, "short_theory": 0,
+                "short_exercise": 0, "long_theory": 0, "long_exercise": 0,
+                "num_theory": 0, "num_exercise": 0,
+                "marks_mcq": 1, "marks_short": 2, "marks_long": 5, "marks_numerical": 4,
+                "sec_title_0": "Short Qs Ch 1", "sec_qtype_0": "Short",
+                "sec_format_0": "General", "sec_theory_0": 1, "sec_exercise_0": 1,
+                "sec_marks_0": 2, "sec_chapters_0": [str(ch1.id)],
+                "sec_title_1": "Short Qs Ch 2", "sec_qtype_1": "Short",
+                "sec_format_1": "General", "sec_theory_1": 1, "sec_exercise_1": 1,
+                "sec_marks_1": 2, "sec_chapters_1": [str(ch2.id)],
+                "instructions": "Attempt all questions."}
+        r = c.post("/generator", data=data, follow_redirects=True)
+        assert b"Chapterwise Short Paper" in r.data
+        paper = appmod.Paper.query.filter_by(title="Chapterwise Short Paper").first()
+        assert paper is not None
+        assert [s["title"] for s in paper.sections] == ["Short Qs Ch 1", "Short Qs Ch 2"]
+        sec1 = [q for q in paper.questions if q.get("section") == "Short Qs Ch 1"]
+        sec2 = [q for q in paper.questions if q.get("section") == "Short Qs Ch 2"]
+        assert len(sec1) == 2 and len(sec2) == 2
+        assert all(q["chapter"] == ch1.name for q in sec1)
+        assert all(q["chapter"] == ch2.name for q in sec2)
+        assert paper.total_marks == 8  # 4 Short x 2, no choice
+        assert b"Short Qs Ch 1" in r.data and b"Short Qs Ch 2" in r.data
 
 
 def test_excel_import_format_column():

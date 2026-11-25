@@ -26,6 +26,7 @@ Date: {{ paper.paper_date }} · Time: {{ paper.duration_minutes }} minutes · To
 {% for sec in paper.sections %}
 {% set items = paper.questions | selectattr('section','equalto',sec.title) | list %}
 {% if items %}<div class="card"><h2>{{ sec.title }}{% if sec.attempt %} — Attempt any {{ sec.attempt }} out of {{ items|length }}{% endif %}</h2>
+{% if sec.note %}<p class="muted">{{ sec.note }}</p>{% endif %}
 {% for q in items %}{% set ns.n = ns.n + 1 %}
 <div class="qbox"><b>Q{{ ns.n }}.</b> {{ q.text }} <b>[{{ q.marks }} marks]</b> <span class="muted">({{ q.source }} · {{ q.chapter }})</span>
 {% if q.options %}<ol type="A">{% for o in q.options %}<li>{{ o }}</li>{% endfor %}</ol>{% endif %}</div>

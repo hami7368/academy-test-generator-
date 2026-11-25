@@ -40,7 +40,7 @@
 </div>{% endfor %}
 </div>
 <h2>Custom sections — optional</h2>
-<p class="muted">Need an Essay, Tashreeh, Translation or any other part? Click <b>+ Add Section</b>, give it a title, and pick which questions it takes. Each section can have its own "Attempt any" choice.</p>
+<p class="muted">Need an Essay, Tashreeh, Translation or any other part? Click <b>+ Add Section</b>, choose what to add, and set its chapters, marks and choice. Essay / Tashreeh / Translation have no Theory / Exercise — just say how many. Each section can cover different chapters, so you can have two Short sections from different chapters.</p>
 <div id="sections"></div>
 <p><button type="button" class="btn btn-secondary" onclick="addSection()">+ Add Section</button></p>
 <p><b>Total marks: <span id="total">0</span></b> (calculated live; also checked on the server)</p>
@@ -49,13 +49,16 @@
 <script>
 const cls=document.getElementById('cls'), subj=document.getElementById('subj');
 cls.onchange=async()=>{ subj.innerHTML='<option value="">— Select subject —</option>';
+  CHAPTERS=[]; refreshSectionChapters(); refreshSectionFormats();
   if(!cls.value) return;
   const r=await fetch('/api/subjects/'+cls.value); const d=await r.json();
   d.forEach(s=>{ const o=document.createElement('option'); o.value=s.id; o.textContent=s.name; subj.appendChild(o); }); };
 subj.onchange=async()=>{ const box=document.getElementById('chapters'); box.innerHTML='';
   if(!subj.value) return;
   const r=await fetch('/api/chapters/'+subj.value); const d=await r.json();
-  d.forEach(c=>{ const l=document.createElement('label'); l.style.display='block'; l.innerHTML='<input type="checkbox" name="chapter_ids" value="'+c.id+'"> Ch '+c.number+': '+c.name; box.appendChild(l); }); };
+  CHAPTERS=d;
+  d.forEach(c=>{ const l=document.createElement('label'); l.style.display='block'; l.innerHTML='<input type="checkbox" name="chapter_ids" value="'+c.id+'"> Ch '+c.number+': '+c.name; box.appendChild(l); }); 
+  refreshSectionFormats(); refreshSectionChapters(); };
 document.getElementById('scope').onchange=e=>{ document.getElementById('chapbox').style.display=(e.target.value==='full'||e.target.value==='half')?'none':'block'; };
 function total(){ let t=0;
   document.querySelectorAll('.qty-grid .card').forEach(card=>{
@@ -66,34 +69,104 @@ function total(){ let t=0;
     t+=n*marks; });
   document.querySelectorAll('[data-sec]').forEach(card=>{
     const marks=+card.querySelector('.sec-marks').value||0;
-    let qty=0; card.querySelectorAll('.sec-qty').forEach(i=>qty+=(+i.value||0));
+    const writing = card.querySelector('.sec-split').hidden;
+    let qty=0;
+    if(writing){ qty=+(card.querySelector('.sec-qty-single').value||0); }
+    else { card.querySelectorAll('.sec-qty').forEach(i=>qty+=(+i.value||0)); }
+    const chk=card.querySelector('.sec-choice');
     const att=card.querySelector('.sec-attempt');
-    let n=qty; if(att && +att.value>0) n=Math.min(+att.value, qty);
+    let n=qty; if(chk && chk.checked && att && +att.value>0) n=Math.min(+att.value, qty);
     t+=n*marks; });
   document.getElementById('total').textContent=t; }
 document.getElementById('genform').addEventListener('input', total);
 // ---- Custom "Add Section" blocks ----
 const FORMATS = {{ formats|tojson }};
+const FORMAT_GROUPS = {{ format_groups|tojson }};
 const PRESET_SECTIONS = {{ preset_sections|tojson }};
+const WRITING = new Set([].concat(FORMAT_GROUPS.English||[], FORMAT_GROUPS.Urdu||[]));
+const FMT_QTYPE = {Essay:'Long',Story:'Long',Application:'Long',Letter:'Long',Mazmoon:'Long',Darkhwast:'Long',Translation:'Short',Tashreeh:'Short',Khulasa:'Short',Tarjuma:'Short',Comprehension:'Short',Tenses:'Short'};
+const FMT_MARKS = {Essay:10, Story:10, Mazmoon:10};
+let CHAPTERS = [];
 let secN = 0;
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+function subjectFormats(){
+  const name = subj.selectedOptions[0] ? subj.selectedOptions[0].textContent : '';
+  const low = name.toLowerCase();
+  if(low.includes('english')) return ['General'].concat(FORMAT_GROUPS.English||[]);
+  if(low.includes('urdu')) return ['General'].concat(FORMAT_GROUPS.Urdu||[]);
+  return FORMATS.slice();
+}
+function fmtLabel(f){ return f==='Any' ? 'Any format' : (f==='General' ? 'General questions' : f); }
+function fmtOptions(sel){
+  return ['Any'].concat(subjectFormats()).map(f=>'<option value="'+f+'"'+(sel===f?' selected':'')+'>'+fmtLabel(f)+'</option>').join('');
+}
+function syncSection(block){
+  const fmt = block.querySelector('.sec-format').value;
+  const writing = WRITING.has(fmt);
+  block.querySelector('.sec-single').hidden = !writing;
+  block.querySelector('.sec-split').hidden = writing;
+  const chk = block.querySelector('.sec-choice');
+  block.querySelector('.sec-attempt-wrap').style.display = chk.checked ? 'inline' : 'none';
+  total();
+}
+function onFormatChange(block){
+  const sel = block.querySelector('.sec-format');
+  const fmt = sel.value;
+  const title = block.querySelector('.sec-title');
+  if(!title.value || title.value === block.dataset.prevFmt) title.value = (fmt==='Any'||fmt==='General') ? '' : fmt;
+  block.dataset.prevFmt = fmt;
+  if(FMT_QTYPE[fmt]) block.querySelector('.sec-qtype').value = FMT_QTYPE[fmt];
+  if(FMT_MARKS[fmt]) block.querySelector('.sec-marks').value = FMT_MARKS[fmt];
+  syncSection(block);
+}
+function refreshSectionFormats(){
+  document.querySelectorAll('[data-sec]').forEach(block=>{
+    const sel = block.querySelector('.sec-format');
+    const cur = sel.value;
+    sel.innerHTML = fmtOptions(subjectFormats().includes(cur) || cur==='Any' ? cur : 'Any');
+    syncSection(block);
+  });
+}
+function refreshSectionChapters(){
+  document.querySelectorAll('[data-sec]').forEach(block=>{
+    const i = block.dataset.idx;
+    const box = block.querySelector('.sec-chapters');
+    const kept = new Set([...box.querySelectorAll('input:checked')].map(x=>x.value));
+    box.innerHTML = '';
+    if(!CHAPTERS.length){ box.innerHTML = '<span class="muted">Select a subject first to pick chapters (all chapters are used until then).</span>'; return; }
+    CHAPTERS.forEach(c=>{
+      const l=document.createElement('label'); l.style.display='block';
+      const checked = kept.size ? kept.has(String(c.id)) : true;
+      l.innerHTML='<input type="checkbox" name="sec_chapters_'+i+'" value="'+c.id+'"'+(checked?' checked':'')+'> Ch '+c.number+': '+esc(c.name);
+      box.appendChild(l);
+    });
+  });
+}
 function addSection(p){
-  p = p || {title:'', qtype:'Long', format:'Any', theory:0, exercise:0, marks:5, attempt:''};
+  p = p || {title:'', qtype:'Long', format:'Any', theory:0, exercise:0, qty:0, marks:5, attempt:'', choice:0, note:'', chapters:[]};
   const i = secN++;
-  const d = document.createElement('div'); d.className='card'; d.dataset.sec='1';
+  const d = document.createElement('div'); d.className='card'; d.dataset.sec='1'; d.dataset.idx=i; d.dataset.prevFmt=p.format||'Any';
   const typeOpts = ['MCQ','Short','Long','Numerical'].map(t=>'<option'+(p.qtype===t?' selected':'')+'>'+t+'</option>').join('');
-  const fmtOpts = ['Any'].concat(FORMATS).map(f=>'<option'+(p.format===f?' selected':'')+'>'+f+'</option>').join('');
   d.innerHTML = '<h3>Section</h3>'
-    + '<label>Section title: <input name="sec_title_'+i+'" value="'+esc(p.title)+'" placeholder="e.g. Essay"></label>'
-    + '<div class="row"><div><label>Question type</label><select name="sec_qtype_'+i+'">'+typeOpts+'</select></div>'
-    + '<div><label>Format</label><select name="sec_format_'+i+'">'+fmtOpts+'</select></div></div>'
-    + '<label>Theory: <input type="number" class="sec-qty" name="sec_theory_'+i+'" value="'+(p.theory||0)+'" min="0"> questions</label>'
-    + '<label>Exercise: <input type="number" class="sec-qty" name="sec_exercise_'+i+'" value="'+(p.exercise||0)+'" min="0"> questions</label>'
-    + '<label>Marks per question: <input type="number" class="sec-marks" name="sec_marks_'+i+'" value="'+(p.marks||5)+'" min="1" style="width:80px"></label>'
-    + '<label>Attempt any: <input type="number" class="sec-attempt" name="sec_attempt_'+i+'" value="'+(p.attempt||'')+'" min="0" placeholder="all" style="width:80px"> out of the above (blank = attempt all)</label>'
+    + '<label>What to add? <select class="sec-format" name="sec_format_'+i+'">'+fmtOptions(p.format||'Any')+'</select></label>'
+    + '<label>Section title: <input class="sec-title" name="sec_title_'+i+'" value="'+esc(p.title)+'" placeholder="e.g. Essay"></label>'
+    + '<label>Section instructions (optional): <input name="sec_note_'+i+'" value="'+esc(p.note||'')+'" placeholder="e.g. Write an essay on any ONE of the following topics"></label>'
+    + '<div class="row"><div><label>Question type</label><select class="sec-qtype" name="sec_qtype_'+i+'">'+typeOpts+'</select></div>'
+    + '<div><label>Marks per question</label><input type="number" class="sec-marks" name="sec_marks_'+i+'" value="'+(p.marks||5)+'" min="1" style="width:80px"></div></div>'
+    + '<div class="sec-single"><label>How many? <input type="number" class="sec-qty-single" name="sec_qty_'+i+'" value="'+(p.qty||0)+'" min="0"> questions</label>'
+    + '<p class="muted">Essay / Tashreeh / Translation have no Theory / Exercise — questions are picked from the whole book (or the chapters ticked below).</p></div>'
+    + '<div class="sec-split"><label>Theory: <input type="number" class="sec-qty" name="sec_theory_'+i+'" value="'+(p.theory||0)+'" min="0"> questions</label>'
+    + '<label>Exercise: <input type="number" class="sec-qty" name="sec_exercise_'+i+'" value="'+(p.exercise||0)+'" min="0"> questions</label></div>'
+    + '<label>Chapters for this section <span class="muted">(all ticked = whole book — untick to limit it, e.g. Tashreeh from one ghazal&rsquo;s chapter)</span></label>'
+    + '<div class="sec-chapters"><span class="muted">Select a subject first to pick chapters (all chapters are used until then).</span></div>'
+    + '<label><input type="checkbox" class="sec-choice" name="sec_choice_'+i+'" value="1"'+(p.choice?' checked':'')+'> Give choice in this section (students attempt only some questions)</label> '
+    + '<span class="sec-attempt-wrap">Attempt any: <input type="number" class="sec-attempt" name="sec_attempt_'+i+'" value="'+(p.attempt||'')+'" min="0" style="width:80px"> out of the above</span>'
     + '<p><button type="button" class="btn btn-secondary" onclick="this.closest(\'[data-sec]\').remove();total()">Remove section</button></p>';
   document.getElementById('sections').appendChild(d);
-  total();
+  d.querySelector('.sec-format').addEventListener('change', ()=>onFormatChange(d));
+  d.querySelector('.sec-choice').addEventListener('change', ()=>syncSection(d));
+  refreshSectionChapters();
+  syncSection(d);
 }
 (PRESET_SECTIONS || []).forEach(addSection);
 total();
