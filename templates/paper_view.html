@@ -1,4 +1,16 @@
 {% extends "base.html" %}{% block content %}
+{% macro qbox(q, n) %}
+<div class="qbox"><b>Q{{ n }}.</b>
+{% if q.parts %}
+  {% for part in q.parts %}
+  <div><b>({{ 'ab'[loop.index0] }})</b> {{ part.text }} <b>[{{ part.marks }} marks]</b> <span class="muted">({{ part.chapter }})</span>
+  {% if part.options %}<ol type="A">{% for o in part.options %}<li>{{ o }}</li>{% endfor %}</ol>{% endif %}</div>
+  {% endfor %}
+{% else %}
+  {{ q.text }} <b>[{{ q.marks }} marks]</b> <span class="muted">({{ q.source }} · {{ q.chapter }})</span>
+  {% if q.options %}<ol type="A">{% for o in q.options %}<li>{{ o }}</li>{% endfor %}</ol>{% endif %}
+{% endif %}</div>
+{% endmacro %}
 <div class="card">
 <h1>{{ paper.title }} — Paper {{ paper.variant }}</h1>
 <p><b>{{ academy_name }}</b> · {{ paper.class_level.name if paper.class_level }} · {{ paper.subject.name if paper.subject }}<br>
@@ -20,16 +32,14 @@ Date: {{ paper.paper_date }} · Time: {{ paper.duration_minutes }} minutes · To
 {% set items = paper.questions | selectattr('qtype','equalto',qtype) | rejectattr('section') | list %}
 {% if items %}<div class="card"><h2>{{ {'MCQ':'MCQs','Short':'Short Questions','Long':'Long Questions','Numerical':'Numericals'}[qtype] }}{% if paper.attempts.get(qtype) %} — Attempt any {{ paper.attempts[qtype] }} out of {{ items|length }}{% endif %}</h2>
 {% for q in items %}{% set ns.n = ns.n + 1 %}
-<div class="qbox"><b>Q{{ ns.n }}.</b> {{ q.text }} <b>[{{ q.marks }} marks]</b> <span class="muted">({{ q.source }} · {{ q.chapter }})</span>
-{% if q.options %}<ol type="A">{% for o in q.options %}<li>{{ o }}</li>{% endfor %}</ol>{% endif %}</div>
+{{ qbox(q, ns.n) }}
 {% endfor %}</div>{% endif %}{% endfor %}
 {% for sec in paper.sections %}
 {% set items = paper.questions | selectattr('section','equalto',sec.title) | list %}
 {% if items %}<div class="card"><h2>{{ sec.title }}{% if sec.attempt %} — Attempt any {{ sec.attempt }} out of {{ items|length }}{% endif %}</h2>
 {% if sec.note %}<p class="muted">{{ sec.note }}</p>{% endif %}
 {% for q in items %}{% set ns.n = ns.n + 1 %}
-<div class="qbox"><b>Q{{ ns.n }}.</b> {{ q.text }} <b>[{{ q.marks }} marks]</b> <span class="muted">({{ q.source }} · {{ q.chapter }})</span>
-{% if q.options %}<ol type="A">{% for o in q.options %}<li>{{ o }}</li>{% endfor %}</ol>{% endif %}</div>
+{{ qbox(q, ns.n) }}
 {% endfor %}</div>{% endif %}{% endfor %}
 {% if not paper.questions %}<div class="card"><p class="muted">This paper has no questions.</p></div>{% endif %}
 {% endblock %}

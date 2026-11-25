@@ -40,7 +40,7 @@
 </div>{% endfor %}
 </div>
 <h2>Custom sections — optional</h2>
-<p class="muted">Need an Essay, Tashreeh, Translation or any other part? Click <b>+ Add Section</b>, choose what to add, and set its chapters, marks and choice. Essay / Tashreeh / Translation have no Theory / Exercise — just say how many. Each section can cover different chapters, so you can have two Short sections from different chapters.</p>
+<p class="muted">Need an Essay, Tashreeh, Translation or any other part? Click <b>+ Add Section</b>, choose what to add, and set its chapters, marks and choice. Essay / Tashreeh / Translation have no Theory / Exercise — just say how many. Each section can cover different chapters, so you can have two Short sections from different chapters. Add as many sections as you like — there is no limit. A Long section can also be split into <b>part (a) and part (b)</b> (e.g. (a) a Short question and (b) a Numerical), each part with its own chapters — leave all chapter boxes ticked and the app picks from any chapter itself.</p>
 <div id="sections"></div>
 <p><button type="button" class="btn btn-secondary" onclick="addSection()">+ Add Section</button></p>
 <p><b>Total marks: <span id="total">0</span></b> (calculated live; also checked on the server)</p>
@@ -68,6 +68,15 @@ function total(){ let t=0;
     let n=qty; if(att && +att.value>0) n=Math.min(+att.value, qty);
     t+=n*marks; });
   document.querySelectorAll('[data-sec]').forEach(card=>{
+    const parts = card.querySelector('.sec-parts').checked;
+    if(parts){
+      const qty=+(card.querySelector('.sec-qty-single').value||0);
+      const pm=(+card.querySelector('.sec-parta-marks').value||0)+(+card.querySelector('.sec-partb-marks').value||0);
+      const chk=card.querySelector('.sec-choice');
+      const att=card.querySelector('.sec-attempt');
+      let n=qty; if(chk && chk.checked && att && +att.value>0) n=Math.min(+att.value, qty);
+      t+=n*pm; return;
+    }
     const marks=+card.querySelector('.sec-marks').value||0;
     const writing = card.querySelector('.sec-split').hidden;
     let qty=0;
@@ -102,9 +111,13 @@ function fmtOptions(sel){
 }
 function syncSection(block){
   const fmt = block.querySelector('.sec-format').value;
-  const writing = WRITING.has(fmt);
+  const parts = block.querySelector('.sec-parts').checked;
+  if(parts) block.querySelector('.sec-qtype').value = 'Long';
+  const writing = WRITING.has(fmt) || parts;
   block.querySelector('.sec-single').hidden = !writing;
   block.querySelector('.sec-split').hidden = writing;
+  block.querySelector('.sec-parts-box').hidden = !parts;
+  block.querySelector('.sec-marks-wrap').style.display = parts ? 'none' : '';
   const chk = block.querySelector('.sec-choice');
   block.querySelector('.sec-attempt-wrap').style.display = chk.checked ? 'inline' : 'none';
   total();
@@ -127,19 +140,28 @@ function refreshSectionFormats(){
     syncSection(block);
   });
 }
+function fillChapters(box, name, kept){
+  box.innerHTML = '';
+  if(!CHAPTERS.length){ box.innerHTML = '<span class="muted">Select a subject first to pick chapters (all chapters are used until then).</span>'; return; }
+  CHAPTERS.forEach(c=>{
+    const l=document.createElement('label'); l.style.display='block';
+    const checked = kept.size ? kept.has(String(c.id)) : true;
+    l.innerHTML='<input type="checkbox" name="'+name+'" value="'+c.id+'"'+(checked?' checked':'')+'> Ch '+c.number+': '+esc(c.name);
+    box.appendChild(l);
+  });
+}
 function refreshSectionChapters(){
   document.querySelectorAll('[data-sec]').forEach(block=>{
     const i = block.dataset.idx;
     const box = block.querySelector('.sec-chapters');
     const kept = new Set([...box.querySelectorAll('input:checked')].map(x=>x.value));
-    box.innerHTML = '';
-    if(!CHAPTERS.length){ box.innerHTML = '<span class="muted">Select a subject first to pick chapters (all chapters are used until then).</span>'; return; }
-    CHAPTERS.forEach(c=>{
-      const l=document.createElement('label'); l.style.display='block';
-      const checked = kept.size ? kept.has(String(c.id)) : true;
-      l.innerHTML='<input type="checkbox" name="sec_chapters_'+i+'" value="'+c.id+'"'+(checked?' checked':'')+'> Ch '+c.number+': '+esc(c.name);
-      box.appendChild(l);
-    });
+    fillChapters(box, 'sec_chapters_'+i, kept);
+    const boxA = block.querySelector('.sec-parta-chapters');
+    const keptA = new Set([...boxA.querySelectorAll('input:checked')].map(x=>x.value));
+    fillChapters(boxA, 'sec_parta_chapters_'+i, keptA);
+    const boxB = block.querySelector('.sec-partb-chapters');
+    const keptB = new Set([...boxB.querySelectorAll('input:checked')].map(x=>x.value));
+    fillChapters(boxB, 'sec_partb_chapters_'+i, keptB);
   });
 }
 function addSection(p){
@@ -147,16 +169,23 @@ function addSection(p){
   const i = secN++;
   const d = document.createElement('div'); d.className='card'; d.dataset.sec='1'; d.dataset.idx=i; d.dataset.prevFmt=p.format||'Any';
   const typeOpts = ['MCQ','Short','Long','Numerical'].map(t=>'<option'+(p.qtype===t?' selected':'')+'>'+t+'</option>').join('');
+  const partTypeOpts = s=>['MCQ','Short','Long','Numerical'].map(t=>'<option'+(s===t?' selected':'')+'>'+t+'</option>').join('');
   d.innerHTML = '<h3>Section</h3>'
     + '<label>What to add? <select class="sec-format" name="sec_format_'+i+'">'+fmtOptions(p.format||'Any')+'</select></label>'
     + '<label>Section title: <input class="sec-title" name="sec_title_'+i+'" value="'+esc(p.title)+'" placeholder="e.g. Essay"></label>'
     + '<label>Section instructions (optional): <input name="sec_note_'+i+'" value="'+esc(p.note||'')+'" placeholder="e.g. Write an essay on any ONE of the following topics"></label>'
     + '<div class="row"><div><label>Question type</label><select class="sec-qtype" name="sec_qtype_'+i+'">'+typeOpts+'</select></div>'
-    + '<div><label>Marks per question</label><input type="number" class="sec-marks" name="sec_marks_'+i+'" value="'+(p.marks||5)+'" min="1" style="width:80px"></div></div>'
+    + '<div class="sec-marks-wrap"><label>Marks per question</label><input type="number" class="sec-marks" name="sec_marks_'+i+'" value="'+(p.marks||5)+'" min="1" style="width:80px"></div></div>'
     + '<div class="sec-single"><label>How many? <input type="number" class="sec-qty-single" name="sec_qty_'+i+'" value="'+(p.qty||0)+'" min="0"> questions</label>'
     + '<p class="muted">Essay / Tashreeh / Translation have no Theory / Exercise — questions are picked from the whole book (or the chapters ticked below).</p></div>'
     + '<div class="sec-split"><label>Theory: <input type="number" class="sec-qty" name="sec_theory_'+i+'" value="'+(p.theory||0)+'" min="0"> questions</label>'
     + '<label>Exercise: <input type="number" class="sec-qty" name="sec_exercise_'+i+'" value="'+(p.exercise||0)+'" min="0"> questions</label></div>'
+    + '<label><input type="checkbox" class="sec-parts" name="sec_parts_'+i+'" value="1"'+(p.parts?' checked':'')+'> Split each Long question into part (a) and part (b)</label>'
+    + '<div class="sec-parts-box" hidden>'
+    + '<div><b>Part (a)</b> — Type: <select name="sec_parta_type_'+i+'">'+partTypeOpts(p.parta_type||'Short')+'</select> Marks: <input type="number" class="sec-parta-marks" name="sec_parta_marks_'+i+'" value="'+(p.parta_marks||5)+'" min="1" style="width:70px"></div>'
+    + '<div><span class="muted">Part (a) chapters (all ticked = the app picks from any chapter itself):</span></div><div class="sec-parta-chapters"></div>'
+    + '<div><b>Part (b)</b> — Type: <select name="sec_partb_type_'+i+'">'+partTypeOpts(p.partb_type||'Numerical')+'</select> Marks: <input type="number" class="sec-partb-marks" name="sec_partb_marks_'+i+'" value="'+(p.partb_marks||5)+'" min="1" style="width:70px"></div>'
+    + '<div><span class="muted">Part (b) chapters (all ticked = auto):</span></div><div class="sec-partb-chapters"></div></div>'
     + '<label>Chapters for this section <span class="muted">(all ticked = whole book — untick to limit it, e.g. Tashreeh from one ghazal&rsquo;s chapter)</span></label>'
     + '<div class="sec-chapters"><span class="muted">Select a subject first to pick chapters (all chapters are used until then).</span></div>'
     + '<label><input type="checkbox" class="sec-choice" name="sec_choice_'+i+'" value="1"'+(p.choice?' checked':'')+'> Give choice in this section (students attempt only some questions)</label> '
@@ -165,6 +194,7 @@ function addSection(p){
   document.getElementById('sections').appendChild(d);
   d.querySelector('.sec-format').addEventListener('change', ()=>onFormatChange(d));
   d.querySelector('.sec-choice').addEventListener('change', ()=>syncSection(d));
+  d.querySelector('.sec-parts').addEventListener('change', ()=>syncSection(d));
   refreshSectionChapters();
   syncSection(d);
 }

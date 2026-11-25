@@ -233,9 +233,16 @@ Comprehension, Tashreeh, Khulasa, Mazmoon, Darkhwast, Tarjuma):
 - **Each section has its own chapters**: tick only the chapters it should
   draw from (all ticked = whole book). That is how a full-book test gets two
   Short sections from different chapters, or a Tashreeh section from one
-  ghazal's chapter. Sections print under their own headings in the preview
-  and the PDF, the total marks count only the attempted questions, and
-  sections are kept when you make a variant (A/B/C) or a copy.
+  ghazal's chapter. Add as many sections as you like — there is no limit.
+- **Long questions with parts (a) and (b)**: in a Long section, tick
+  "Split each Long question into part (a) and part (b)". Each part has its
+  own type (e.g. (a) a Short question, (b) a Numerical), its own marks
+  (e.g. 5 + 5 = 10) and its own chapters — leave all chapter boxes ticked
+  and the app picks from any chapter itself. The paper and PDF print it as
+  "Q5. (a) ... [5 marks] (b) ... [5 marks]".
+- Sections print under their own headings in the preview and the PDF, the
+  total marks count only the attempted questions, and sections are kept when
+  you make a variant (A/B/C) or a copy.
 
 ## Add a teacher
 

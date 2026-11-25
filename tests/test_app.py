@@ -221,7 +221,8 @@ def test_custom_section_essay_with_choice_and_variant():
         assert paper.sections == [{"title": "Essay", "qtype": "Long", "format": "Essay",
                                    "theory": 0, "exercise": 0, "qty": 3, "marks": 10,
                                    "attempt": 1, "chapters": [],
-                                   "note": "Write an essay on any ONE topic."}]
+                                   "note": "Write an essay on any ONE topic.",
+                                   "parts": None}]
         assert len(paper.questions) == 5  # 2 MCQ + 3 Essay topics
         # total: 2 MCQ x 1 + attempt 1 Essay x 10 = 12
         assert paper.total_marks == 12, paper.total_marks
@@ -281,6 +282,78 @@ def test_two_short_sections_from_different_chapters():
         assert all(q["chapter"] == ch2.name for q in sec2)
         assert paper.total_marks == 8  # 4 Short x 2, no choice
         assert b"Short Qs Ch 1" in r.data and b"Short Qs Ch 2" in r.data
+
+
+def test_long_parts_section_a_and_b():
+    """Long section split into part (a) Short + part (b) Numerical:
+    one Long question prints as (a) and (b) with their own marks."""
+    c = make_client()
+    login(c, "teacher@test.com", "TeachPass123")
+    with appmod.app.app_context():
+        cl = appmod.ClassLevel.query.filter_by(name="Class 9th").first()
+        subj = appmod.Subject.query.filter_by(name="Physics", class_level_id=cl.id).first()
+        data = {"title": "Long Parts Paper", "class_level_id": cl.id,
+                "subject_id": subj.id, "scope": "full", "difficulty": "Mixed",
+                "duration_minutes": 60, "paper_date": "2026-11-25", "variant": "A",
+                "mcq_theory": 0, "mcq_exercise": 0, "short_theory": 0,
+                "short_exercise": 0, "long_theory": 0, "long_exercise": 0,
+                "num_theory": 0, "num_exercise": 0,
+                "marks_mcq": 1, "marks_short": 2, "marks_long": 5, "marks_numerical": 4,
+                "sec_title_0": "Long Questions", "sec_qtype_0": "Long",
+                "sec_format_0": "General", "sec_qty_0": 2, "sec_parts_0": "1",
+                "sec_parta_type_0": "Short", "sec_parta_marks_0": 5,
+                "sec_partb_type_0": "Numerical", "sec_partb_marks_0": 5,
+                "instructions": "Attempt all questions."}
+        r = c.post("/generator", data=data, follow_redirects=True)
+        assert b"Long Parts Paper" in r.data
+        paper = appmod.Paper.query.filter_by(title="Long Parts Paper").first()
+        assert paper is not None
+        assert len(paper.questions) == 2
+        assert paper.total_marks == 20, paper.total_marks  # 2 x (5 + 5)
+        for q in paper.questions:
+            assert len(q["parts"]) == 2
+            assert q["parts"][0]["qtype"] == "Short"
+            assert q["parts"][1]["qtype"] == "Numerical"
+        assert b"(a)" in r.data and b"(b)" in r.data
+        pdf = c.get(f"/papers/{paper.id}/pdf")
+        assert pdf.status_code == 200 and pdf.data[:4] == b"%PDF"
+        # variant re-picks both parts and keeps the total
+        c.post(f"/generator/variant/{paper.id}", data={"variant": "B"},
+               follow_redirects=True)
+        var = appmod.Paper.query.filter_by(title="Long Parts Paper",
+                                           variant="B").first()
+        assert var is not None and var.total_marks == 20
+        assert all(len(q["parts"]) == 2 for q in var.questions)
+
+
+def test_sections_have_no_limit_and_skipped_indices_count():
+    """Sections are not limited and non-sequential indices all count
+    (removing a middle section must not drop the ones after it)."""
+    c = make_client()
+    login(c, "teacher@test.com", "TeachPass123")
+    with appmod.app.app_context():
+        cl = appmod.ClassLevel.query.filter_by(name="Class 9th").first()
+        subj = appmod.Subject.query.filter_by(name="Physics", class_level_id=cl.id).first()
+        data = {"title": "Many Sections Paper", "class_level_id": cl.id,
+                "subject_id": subj.id, "scope": "full", "difficulty": "Mixed",
+                "duration_minutes": 60, "paper_date": "2026-11-25", "variant": "A",
+                "mcq_theory": 0, "mcq_exercise": 0, "short_theory": 0,
+                "short_exercise": 0, "long_theory": 0, "long_exercise": 0,
+                "num_theory": 0, "num_exercise": 0,
+                "marks_mcq": 1, "marks_short": 2, "marks_long": 5, "marks_numerical": 4,
+                "sec_title_0": "S0", "sec_qtype_0": "Short", "sec_format_0": "General",
+                "sec_theory_0": 1, "sec_exercise_0": 0, "sec_marks_0": 2,
+                "sec_title_3": "S3", "sec_qtype_3": "Short", "sec_format_3": "General",
+                "sec_theory_3": 1, "sec_exercise_3": 0, "sec_marks_3": 2,
+                "sec_title_7": "S7", "sec_qtype_7": "Short", "sec_format_7": "General",
+                "sec_theory_7": 1, "sec_exercise_7": 0, "sec_marks_7": 2,
+                "instructions": "Attempt all questions."}
+        r = c.post("/generator", data=data, follow_redirects=True)
+        assert b"Many Sections Paper" in r.data
+        paper = appmod.Paper.query.filter_by(title="Many Sections Paper").first()
+        assert paper is not None
+        assert [s["title"] for s in paper.sections] == ["S0", "S3", "S7"]
+        assert len(paper.questions) == 3 and paper.total_marks == 6
 
 
 def test_excel_import_format_column():

@@ -1083,6 +1083,23 @@ def _snapshot_question(qq, marks, section=""):
             "format": qq.format or "General", "section": section}
 
 
+def _parts_snapshot(a, b, pa_marks, pb_marks, section, fmt):
+    """One Long question made of two picked questions: part (a) + part (b),
+    e.g. (a) a Short theory question and (b) a Numerical."""
+    def _part(qq, marks):
+        ch = db.session.get(Chapter, qq.chapter_id)
+        return {"id": qq.id, "text": qq.text, "qtype": qq.qtype,
+                "source": qq.source, "marks": marks,
+                "options": qq.options, "correct_option": qq.correct_option,
+                "answer": qq.answer or "", "chapter": ch.name if ch else ""}
+    pa, pb = _part(a, pa_marks), _part(b, pb_marks)
+    return {"id": a.id, "text": a.text, "qtype": "Long", "source": a.source,
+            "marks": pa_marks + pb_marks, "options": None, "correct_option": None,
+            "answer": "", "chapter": pa["chapter"],
+            "format": fmt or "General", "section": section,
+            "parts": [pa, pb]}
+
+
 @app.route("/generator", methods=["GET", "POST"])
 @login_required
 def generator():
@@ -1125,10 +1142,12 @@ def generator():
         # Writing formats (Essay, Tashreeh, ...) have no Theory/Exercise split:
         # they ask for one quantity, picked from all sources, and only from
         # the chapters ticked for that section (all chapters if none ticked).
+        # There is no limit on sections: every sec_title_<n> in the form counts.
         section_metas, preset_sections = [], []
-        for i in range(50):  # indices can skip if a middle section was removed
-            if f"sec_title_{i}" not in request.form:
-                continue
+        sec_indices = sorted({int(k.split("_")[-1]) for k in request.form.keys()
+                              if k.startswith("sec_title_")
+                              and k.split("_")[-1].isdigit()})
+        for i in sec_indices:
             sec_title = (request.form.get(f"sec_title_{i}") or "").strip()
             fmt = request.form.get(f"sec_format_{i}") or "Any"
             qtype = request.form.get(f"sec_qtype_{i}") or FORMAT_QTYPE.get(fmt, "Long")
@@ -1144,18 +1163,58 @@ def generator():
             ch_sel = [int(x) for x in request.form.getlist(f"sec_chapters_{i}")
                       if str(x).isdigit()]
             sec_ch_ids = ch_sel or ch_ids
+            # Long questions split into part (a) and part (b): each part has
+            # its own type, marks and chapters (no chapters ticked = auto).
+            parts_on = (request.form.get(f"sec_parts_{i}") == "1"
+                        and qtype == "Long")
+            pa_type = request.form.get(f"sec_parta_type_{i}") or "Short"
+            pb_type = request.form.get(f"sec_partb_type_{i}") or "Numerical"
+            pa_marks = request.form.get(f"sec_parta_marks_{i}", type=int) or 5
+            pb_marks = request.form.get(f"sec_partb_marks_{i}", type=int) or 5
+            pa_ch = [int(x) for x in request.form.getlist(f"sec_parta_chapters_{i}")
+                     if str(x).isdigit()]
+            pb_ch = [int(x) for x in request.form.getlist(f"sec_partb_chapters_{i}")
+                     if str(x).isdigit()]
+            parts_meta = ({"a": {"qtype": pa_type, "marks": pa_marks, "chapters": pa_ch},
+                           "b": {"qtype": pb_type, "marks": pb_marks, "chapters": pb_ch}}
+                          if parts_on else None)
             preset_sections.append({"title": sec_title, "qtype": qtype, "format": fmt,
                                     "theory": n_th, "exercise": n_ex, "qty": qty,
                                     "marks": marks, "attempt": attempt,
                                     "choice": 1 if choice else 0,
-                                    "note": note, "chapters": ch_sel})
+                                    "note": note, "chapters": ch_sel,
+                                    "parts": 1 if parts_on else 0,
+                                    "parta_type": pa_type, "partb_type": pb_type,
+                                    "parta_marks": pa_marks, "partb_marks": pb_marks,
+                                    "parta_chapters": pa_ch, "partb_chapters": pb_ch})
             if not sec_title or qtype not in QTYPES:
                 continue
             meta = {"title": sec_title, "qtype": qtype,
                     "format": fmt if fmt in FORMATS else "Any",
                     "theory": n_th, "exercise": n_ex, "qty": qty, "marks": marks,
-                    "attempt": attempt or None, "chapters": ch_sel, "note": note}
+                    "attempt": attempt or None, "chapters": ch_sel, "note": note,
+                    "parts": parts_meta}
             section_metas.append(meta)
+            if parts_on:
+                n_long = qty or (n_th + n_ex)
+                if n_long <= 0:
+                    continue
+                for _ in range(n_long):
+                    pa, _a = _pick_questions(pa_ch or sec_ch_ids, pa_type, None,
+                                             difficulty, 1, used, meta["format"])
+                    pb, _b = _pick_questions(pb_ch or sec_ch_ids, pb_type, None,
+                                             difficulty, 1, used, meta["format"])
+                    if not pa or not pb:
+                        shortfalls.append(
+                            f"{sec_title}: not enough questions for part (a)/(b) "
+                            f"— asked {n_long} Long questions")
+                        break
+                    a, b = pa[0], pb[0]
+                    used.add(a.id)
+                    used.add(b.id)
+                    selected.append(_parts_snapshot(a, b, pa_marks, pb_marks,
+                                                    sec_title, a.format or "General"))
+                continue
             if fmt in WRITING_FORMATS:
                 if qty <= 0:
                     continue
@@ -1253,6 +1312,26 @@ def paper_variant(pid):
     # Custom sections: re-pick within each section's own format/counts/chapters.
     for sec in orig.sections:
         sec_ch = sec.get("chapters") or ch_ids
+        if sec.get("parts"):
+            sp = sec["parts"]
+            pa, pb = sp["a"], sp["b"]
+            for oq in [q for q in orig_qs if q.get("section") == sec["title"]]:
+                pa_ids = pa.get("chapters") or sec_ch
+                pb_ids = pb.get("chapters") or sec_ch
+                picked_a, _ = _pick_questions(pa_ids, pa["qtype"], None, "Mixed",
+                                              1, used_ids, sec.get("format") or "Any")
+                picked_b, _ = _pick_questions(pb_ids, pb["qtype"], None, "Mixed",
+                                              1, used_ids, sec.get("format") or "Any")
+                if picked_a and picked_b:
+                    new_qs.append(_parts_snapshot(picked_a[0], picked_b[0],
+                                                  pa["marks"], pb["marks"],
+                                                  sec["title"],
+                                                  sec.get("format") or "General"))
+                    used_ids.add(picked_a[0].id)
+                    used_ids.add(picked_b[0].id)
+                else:
+                    new_qs.append(oq)
+            continue
         if sec.get("qty"):
             n = sec["qty"]
             picked, _ = _pick_questions(sec_ch, sec["qtype"], None, "Mixed",
@@ -1525,6 +1604,19 @@ def _paper_pdf(pid, answer_key=False):
         story.append(Spacer(1, 2 * mm))
         for qq in items:
             n += 1
+            if qq.get("parts"):
+                story.append(Paragraph(f"Q{n}.", body))
+                for letter, part in zip("ab", qq["parts"]):
+                    story.append(Paragraph(f"&nbsp;&nbsp;({letter}) {part['text']} &nbsp; <b>[{part['marks']} marks]</b>", body))
+                    if part["qtype"] == "MCQ" and part.get("options"):
+                        for l2, opt in zip("ABCD", part["options"]):
+                            story.append(Paragraph(f"&nbsp;&nbsp;&nbsp;&nbsp;({l2}) {opt}", body))
+                        if answer_key:
+                            story.append(Paragraph(f"&nbsp;&nbsp;&nbsp;&nbsp;<b>Answer: ({part.get('correct_option', '')})</b>", body))
+                    elif answer_key and part.get("answer"):
+                        story.append(Paragraph(f"&nbsp;&nbsp;&nbsp;&nbsp;<b>Answer:</b> {part['answer']}", body))
+                story.append(Spacer(1, 2 * mm))
+                continue
             story.append(Paragraph(f"Q{n}. {qq['text']} &nbsp; <b>[{qq['marks']} marks]</b>", body))
             if qq["qtype"] == "MCQ" and qq.get("options"):
                 for letter, opt in zip("ABCD", qq["options"]):
