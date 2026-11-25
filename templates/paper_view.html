@@ -18,7 +18,7 @@ Date: {{ paper.paper_date }} · Time: {{ paper.duration_minutes }} minutes · To
 {% set ns = namespace(n=0) %}
 {% for qtype in ['MCQ','Short','Long','Numerical'] %}
 {% set items = paper.questions | selectattr('qtype','equalto',qtype) | list %}
-{% if items %}<div class="card"><h2>{{ {'MCQ':'MCQs','Short':'Short Questions','Long':'Long Questions','Numerical':'Numericals'}[qtype] }}</h2>
+{% if items %}<div class="card"><h2>{{ {'MCQ':'MCQs','Short':'Short Questions','Long':'Long Questions','Numerical':'Numericals'}[qtype] }}{% if paper.attempts.get(qtype) %} — Attempt any {{ paper.attempts[qtype] }} out of {{ items|length }}{% endif %}</h2>
 {% for q in items %}{% set ns.n = ns.n + 1 %}
 <div class="qbox"><b>Q{{ ns.n }}.</b> {{ q.text }} <b>[{{ q.marks }} marks]</b> <span class="muted">({{ q.source }} · {{ q.chapter }})</span>
 {% if q.options %}<ol type="A">{% for o in q.options %}<li>{{ o }}</li>{% endfor %}</ol>{% endif %}</div>

@@ -194,6 +194,21 @@ Typing questions one by one is slow. Instead, fill an Excel sheet and upload it:
 After a code update on PythonAnywhere, run in the Bash console
 `git pull` and `pip install -r requirements.txt` (only needed when
 `requirements.txt` changed), then click **Reload** on the Web tab.
+From the next update on, one command does the same thing:
+
+```bash
+bash academy-test-generator-/update.sh
+```
+
+## Choice in a paper ("Attempt any N out of M")
+
+On the Generate Paper page, under each type (MCQ / Short / Long / Numerical)
+there is an **Attempt any** box. Leave it blank and students attempt all
+questions; enter e.g. **5** for Short and the paper prints all 8 Short
+questions with the heading **"Attempt any 5 out of 8"** — and the total marks
+count only the 5 attempted (5 × 2 = 10, not 8 × 2). The choice is shown on the
+web preview and in the PDF, and is kept when you make a variant (A/B/C) or a
+copy. Attempt can never be more than the questions in that section.
 
 ## Add a teacher
 

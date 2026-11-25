@@ -141,6 +141,40 @@ def test_paper_generation_marks_and_pdf_and_history():
         assert appmod.Paper.query.filter_by(title="Impossible Paper").first() is None
 
 
+def test_attempt_any_choice_total_and_pdf():
+    """Choice: 8 Short questions in the paper, students attempt any 5 —
+    total marks count only the 5 attempted, and the PDF says so."""
+    c = make_client()
+    login(c, "teacher@test.com", "TeachPass123")
+    with appmod.app.app_context():
+        cl = appmod.ClassLevel.query.filter_by(name="Class 9th").first()
+        subj = appmod.Subject.query.filter_by(name="Physics", class_level_id=cl.id).first()
+        data = {"title": "Choice Paper", "class_level_id": cl.id, "subject_id": subj.id,
+                "scope": "full", "difficulty": "Mixed", "duration_minutes": 60,
+                "paper_date": "2026-11-25", "variant": "A",
+                "mcq_theory": 2, "mcq_exercise": 0, "short_theory": 4, "short_exercise": 4,
+                "long_theory": 0, "long_exercise": 0, "num_theory": 0, "num_exercise": 0,
+                "attempt_short": 5, "attempt_mcq": 0,
+                "marks_mcq": 1, "marks_short": 2, "marks_long": 5, "marks_numerical": 4,
+                "instructions": "Attempt all questions."}
+        r = c.post("/generator", data=data, follow_redirects=True)
+        assert b"Choice Paper" in r.data
+        paper = appmod.Paper.query.filter_by(title="Choice Paper").first()
+        assert paper is not None
+        assert len(paper.questions) == 10  # all 8 Short + 2 MCQ are printed
+        assert paper.attempts == {"Short": 5}
+        # total marks: 5 Short x 2 + 2 MCQ x 1 = 12 (not 8x2+2)
+        assert paper.total_marks == 12, paper.total_marks
+        assert b"Attempt any 5 out of 8" in r.data
+        pdf = c.get(f"/papers/{paper.id}/pdf")
+        assert pdf.status_code == 200 and pdf.data[:4] == b"%PDF"
+        # attempt more than the section has -> refused, no paper created
+        data2 = dict(data, title="Bad Choice Paper", attempt_short=9)
+        r2 = c.post("/generator", data=data2, follow_redirects=True)
+        assert b"more than the 8 questions" in r2.data
+        assert appmod.Paper.query.filter_by(title="Bad Choice Paper").first() is None
+
+
 def test_excel_import_template_and_upload():
     import io as _io
     from openpyxl import Workbook, load_workbook

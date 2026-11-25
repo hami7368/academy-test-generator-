@@ -155,10 +155,18 @@ class Paper(db.Model):
     instructions = db.Column(db.Text)
     paper_date = db.Column(db.String(20))
     questions_json = db.Column(db.Text, nullable=False, default="[]")  # snapshot [{id,text,qtype,source,marks,options,correct_option,answer,chapter}]
+    attempt_json = db.Column(db.Text, default="{}")  # {"Short": 5} = attempt any 5 out of the Short questions
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     teacher = db.relationship("User")
     class_level = db.relationship("ClassLevel")
     subject = db.relationship("Subject")
+
+    @property
+    def attempts(self):
+        try:
+            return json.loads(self.attempt_json or "{}")
+        except Exception:
+            return {}
 
     @property
     def questions(self):
@@ -230,8 +238,42 @@ def ensure_admin_from_env():
     return True
 
 
+def _ensure_attempt_column():
+    """Add Paper.attempt_json to databases created before the choice feature.
+    Fresh databases already get the column from create_all()."""
+    try:
+        from sqlalchemy import text as _text
+        cols = [r[1] for r in db.session.execute(_text("PRAGMA table_info(paper)"))]
+        if "attempt_json" not in cols:
+            db.session.execute(_text("ALTER TABLE paper ADD COLUMN attempt_json TEXT DEFAULT '{}'"))
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
+        try:
+            from sqlalchemy import text as _text2
+            db.session.execute(_text2("ALTER TABLE paper ADD COLUMN IF NOT EXISTS attempt_json TEXT DEFAULT '{}'"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+
+
+def _total_with_attempts(questions, attempts):
+    """Total marks counting only the questions a student must attempt:
+    for each type, the first N questions where N = attempts[type] (or all)."""
+    grouped = {}
+    for q in questions:
+        grouped.setdefault(q["qtype"], []).append(q)
+    total = 0
+    for qtype, items in grouped.items():
+        n = (attempts or {}).get(qtype)
+        n = len(items) if n is None else max(0, min(int(n), len(items)))
+        total += sum(item["marks"] for item in items[:n])
+    return total
+
+
 def init_db():
     db.create_all()
+    _ensure_attempt_column()
     ensure_admin_from_env()
     try:
         from seed import seed_all
@@ -976,7 +1018,6 @@ def generator():
         marks_per = {t: (request.form.get(f"marks_{t.lower()}", type=int)
                          or TYPE_MARKS_DEFAULT[t]) for t in QTYPES}
         selected, shortfalls = [], []
-        total = 0
         for qtype, f_th, f_ex in QTY_FIELDS:
             for source, field in (("Theory", f_th), ("Exercise", f_ex)):
                 n = request.form.get(field, type=int) or 0
@@ -992,18 +1033,30 @@ def generator():
                                      "options": qq.options, "correct_option": qq.correct_option,
                                      "answer": qq.answer or "",
                                      "chapter": ch.name if ch else ""})
-                    total += marks_per[qq.qtype]
         if shortfalls and not allow_short:
             # Do NOT silently make a short paper: show the warning and ask to confirm.
             return render_template("generator.html", classes=classes,
                                    shortfalls=shortfalls, form_data=request.form)
+        # "Attempt any N out of M" choice, per question type (e.g. Short: any 5 of 8).
+        attempts = {}
+        for qtype in QTYPES:
+            a = request.form.get(f"attempt_{qtype.lower()}", type=int) or 0
+            if a:
+                attempts[qtype] = a
+        for qtype, n in attempts.items():
+            have = sum(1 for q in selected if q["qtype"] == qtype)
+            if n > have:
+                flash(f"Attempt any {n} for {TYPE_LABEL[qtype]} is more than the {have} questions in that section — lower it or add more questions first.", "error")
+                return render_template("generator.html", classes=classes, form_data=request.form)
+        total = _total_with_attempts(selected, attempts)
         if not selected:
             flash("No questions selected — set at least one quantity above 0.", "error")
             return render_template("generator.html", classes=classes)
         paper = Paper(title=title, teacher_id=current_user.id, class_level_id=cid,
                       subject_id=sid, variant=variant, total_marks=total,
                       duration_minutes=duration, instructions=instructions,
-                      paper_date=paper_date, questions_json=json.dumps(selected))
+                      paper_date=paper_date, questions_json=json.dumps(selected),
+                      attempt_json=json.dumps(attempts))
         db.session.add(paper)
         db.session.commit()
         log_activity("paper_generated", f"{title} ({total} marks)")
@@ -1046,13 +1099,14 @@ def paper_variant(pid):
                                    "chapter": ch.name if ch else ""})
                 else:
                     new_qs.append(qq)
-                total += bucket[0]["marks"]
+    total = _total_with_attempts(new_qs, orig.attempts)
     paper = Paper(title=orig.title, teacher_id=orig.teacher_id,
                   class_level_id=orig.class_level_id, subject_id=orig.subject_id,
                   variant=variant, total_marks=total,
                   duration_minutes=orig.duration_minutes,
                   instructions=orig.instructions, paper_date=orig.paper_date,
-                  questions_json=json.dumps(new_qs))
+                  questions_json=json.dumps(new_qs),
+                  attempt_json=json.dumps(orig.attempts))
     db.session.add(paper)
     db.session.commit()
     flash(f"Paper {variant} created with a different question selection.", "success")
@@ -1089,10 +1143,9 @@ def paper_edit(pid):
             for i, q in enumerate(qs):
                 q["text"] = request.form.get(f"text_{i}", q["text"])
                 q["marks"] = request.form.get(f"marks_{i}", type=int) or q["marks"]
-                total += q["marks"]
                 new_qs.append(q)
             p.questions_json = json.dumps(new_qs)
-            p.total_marks = total
+            p.total_marks = _total_with_attempts(new_qs, p.attempts)
             db.session.commit()
             flash("Paper saved.", "success")
             return redirect(url_for("paper_view", pid=p.id))
@@ -1101,7 +1154,7 @@ def paper_edit(pid):
             if 0 <= idx < len(qs):
                 qs.pop(idx)
                 p.questions_json = json.dumps(qs)
-                p.total_marks = sum(q["marks"] for q in qs)
+                p.total_marks = _total_with_attempts(qs, p.attempts)
                 db.session.commit()
                 flash("Question removed.", "success")
         elif action == "move":
@@ -1147,7 +1200,8 @@ def paper_duplicate(pid):
                  class_level_id=p.class_level_id, subject_id=p.subject_id,
                  variant=p.variant, total_marks=p.total_marks,
                  duration_minutes=p.duration_minutes, instructions=p.instructions,
-                 paper_date=p.paper_date, questions_json=p.questions_json)
+                 paper_date=p.paper_date, questions_json=p.questions_json,
+                 attempt_json=json.dumps(p.attempts))
     db.session.add(copy)
     db.session.commit()
     flash("Paper copied.", "success")
@@ -1251,12 +1305,16 @@ def _paper_pdf(pid, answer_key=False):
     grouped = {}
     for qq in p.questions:
         grouped.setdefault(qq["qtype"], []).append(qq)
+    attempts = p.attempts
     n = 0
     for qtype in QTYPES:
         items = grouped.get(qtype, [])
         if not items:
             continue
-        story.append(Paragraph(f"Section: {TYPE_LABEL[qtype]}", bold))
+        heading = f"Section: {TYPE_LABEL[qtype]}"
+        if attempts.get(qtype):
+            heading += f" — Attempt any {attempts[qtype]} out of {len(items)}"
+        story.append(Paragraph(heading, bold))
         story.append(Spacer(1, 2 * mm))
         for qq in items:
             n += 1

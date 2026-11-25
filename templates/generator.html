@@ -35,6 +35,7 @@
 <div class="card"><h3>{{ t }}</h3>
 <label>Theory: <input type="number" class="qty" data-marks="{{ m }}" name="{{ th }}" value="0" min="0"> questions</label>
 <label>Exercise: <input type="number" class="qty" data-marks="{{ m }}" name="{{ ex }}" value="0" min="0"> questions</label>
+<label>Attempt any: <input type="number" class="attempt" data-type="{{ t }}" name="attempt_{{ t|lower }}" value="{{ (form_data['attempt_' + t|lower] if form_data else '') }}" min="0" placeholder="all" style="width:80px"> out of the above (blank = attempt all)</label>
 <label>Marks per {{ t }}: <input type="number" class="mpq" data-type="{{ t }}" name="marks_{{ t|lower }}" value="{{ m }}" min="1" style="width:80px"></label>
 </div>{% endfor %}
 </div>
@@ -52,6 +53,13 @@ subj.onchange=async()=>{ const box=document.getElementById('chapters'); box.inne
   const r=await fetch('/api/chapters/'+subj.value); const d=await r.json();
   d.forEach(c=>{ const l=document.createElement('label'); l.style.display='block'; l.innerHTML='<input type="checkbox" name="chapter_ids" value="'+c.id+'"> Ch '+c.number+': '+c.name; box.appendChild(l); }); };
 document.getElementById('scope').onchange=e=>{ document.getElementById('chapbox').style.display=(e.target.value==='full'||e.target.value==='half')?'none':'block'; };
-function total(){ let t=0; document.querySelectorAll('.qty').forEach(i=>{ t += (+i.value||0) * (+document.querySelector('input[name="marks_'+(i.name.includes('mcq')?'mcq':i.name.includes('short')?'short':i.name.includes('long')?'long':'numerical')+'"]').value||0); }); document.getElementById('total').textContent=t; }
-document.querySelectorAll('.qty,.mpq').forEach(i=>i.addEventListener('input',total)); total();
+function total(){ let t=0;
+  document.querySelectorAll('.qty-grid .card').forEach(card=>{
+    const marks=+card.querySelector('.mpq').value||0;
+    let qty=0; card.querySelectorAll('.qty').forEach(i=>qty+=(+i.value||0));
+    const att=card.querySelector('.attempt');
+    let n=qty; if(att && +att.value>0) n=Math.min(+att.value, qty);
+    t+=n*marks; });
+  document.getElementById('total').textContent=t; }
+document.querySelectorAll('.qty,.mpq,.attempt').forEach(i=>i.addEventListener('input',total)); total();
 </script>{% endblock %}
