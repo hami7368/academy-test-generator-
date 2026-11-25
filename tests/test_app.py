@@ -356,6 +356,84 @@ def test_sections_have_no_limit_and_skipped_indices_count():
         assert len(paper.questions) == 3 and paper.total_marks == 6
 
 
+def test_essay_topic_picker_picks_named_then_auto():
+    """Essay section: tick two specific essay topics and the app uses those
+    first (in ticked order), topping up the third itself."""
+    c = make_client()
+    login(c, "admin@test.com", "AdminPass123")
+    with appmod.app.app_context():
+        cl = appmod.ClassLevel.query.filter_by(name="Class 9th").first()
+        subj = appmod.Subject.query.filter_by(name="English", class_level_id=cl.id).first()
+        ch = appmod.Chapter.query.filter_by(subject_id=subj.id).order_by(appmod.Chapter.number).first()
+        for topic in ["My Best Friend", "A Visit to a Museum", "My Aim in Life", "My School"]:
+            c.post("/questions/new", data={
+                "class_level_id": cl.id, "subject_id": subj.id, "chapter_id": ch.id,
+                "qtype": "Long", "source": "Theory", "format": "Essay",
+                "text": f"Write an essay on {topic}.", "difficulty": "Medium",
+                "marks": 10, "answer": f"Outline for {topic}."}, follow_redirects=True)
+        essays = appmod.Question.query.filter_by(format="Essay").order_by(
+            appmod.Question.id).all()
+        assert len(essays) == 4
+        picked = [essays[1], essays[3]]  # Museum, School — in this order
+    login(c, "teacher@test.com", "TeachPass123")
+    with appmod.app.app_context():
+        cl = appmod.ClassLevel.query.filter_by(name="Class 9th").first()
+        subj = appmod.Subject.query.filter_by(name="English", class_level_id=cl.id).first()
+        data = {"title": "Picked Essay Paper", "class_level_id": cl.id,
+                "subject_id": subj.id, "scope": "full", "difficulty": "Mixed",
+                "duration_minutes": 60, "paper_date": "2026-11-25", "variant": "A",
+                "mcq_theory": 0, "mcq_exercise": 0, "short_theory": 0,
+                "short_exercise": 0, "long_theory": 0, "long_exercise": 0,
+                "num_theory": 0, "num_exercise": 0,
+                "marks_mcq": 1, "marks_short": 2, "marks_long": 5, "marks_numerical": 4,
+                "sec_title_0": "Essay", "sec_qtype_0": "Long", "sec_format_0": "Essay",
+                "sec_qty_0": 3, "sec_marks_0": 10, "sec_choice_0": "1",
+                "sec_attempt_0": 1,
+                "sec_pick_0": [str(picked[0].id), str(picked[1].id)],
+                "instructions": "Attempt all questions."}
+        r = c.post("/generator", data=data, follow_redirects=True)
+        assert b"Picked Essay Paper" in r.data
+        paper = appmod.Paper.query.filter_by(title="Picked Essay Paper").first()
+        assert paper is not None and len(paper.questions) == 3
+        assert paper.questions[0]["id"] == picked[0].id
+        assert paper.questions[1]["id"] == picked[1].id
+        assert paper.questions[2]["id"] not in {picked[0].id, picked[1].id}
+        # topic picker API lists only Essay questions of that subject
+        bank = c.get(f"/api/bank/{subj.id}?format=Essay&qtype=Long")
+        assert bank.status_code == 200
+        texts = [row["text"] for row in bank.get_json()]
+        assert len(texts) == 4 and all("essay on" in t for t in texts)
+        assert c.get(f"/api/bank/{subj.id}?format=Story").get_json() == []
+
+
+def test_english_paper_has_no_long_or_numerical():
+    """English (and Urdu) papers have no Long or Numerical questions:
+    even if Long/Numerical quantities are submitted, the paper contains
+    only MCQ + Short. The generator page marks the cards per type."""
+    c = make_client()
+    login(c, "teacher@test.com", "TeachPass123")
+    g = c.get("/generator")
+    assert g.status_code == 200 and 'data-qtype="Long"' in g.data.decode()
+    with appmod.app.app_context():
+        cl = appmod.ClassLevel.query.filter_by(name="Class 9th").first()
+        subj = appmod.Subject.query.filter_by(name="English", class_level_id=cl.id).first()
+        data = {"title": "English Only Paper", "class_level_id": cl.id,
+                "subject_id": subj.id, "scope": "full", "difficulty": "Mixed",
+                "duration_minutes": 60, "paper_date": "2026-11-25", "variant": "A",
+                "mcq_theory": 2, "mcq_exercise": 0, "short_theory": 1,
+                "short_exercise": 0, "long_theory": 2, "long_exercise": 0,
+                "num_theory": 2, "num_exercise": 0,
+                "marks_mcq": 1, "marks_short": 2, "marks_long": 5, "marks_numerical": 4,
+                "instructions": "Attempt all questions."}
+        r = c.post("/generator", data=data, follow_redirects=True)
+        assert b"English Only Paper" in r.data
+        paper = appmod.Paper.query.filter_by(title="English Only Paper").first()
+        assert paper is not None
+        assert all(q["qtype"] in ("MCQ", "Short") for q in paper.questions)
+        assert paper.total_marks == 4  # 2 MCQ x 1 + 1 Short x 2
+        assert b"Long Questions" not in r.data
+
+
 def test_excel_import_format_column():
     import io as _io
     from openpyxl import Workbook

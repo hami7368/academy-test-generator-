@@ -73,6 +73,10 @@ FORMAT_GROUPS = {
 # Writing formats have no Theory/Exercise split — a section just asks for
 # "how many" (essay topics, ashaar for tashreeh, ...), picked from all sources.
 WRITING_FORMATS = set(FORMATS) - {"General"}
+# Pure writing formats have no chapters at all (an essay is not from a
+# chapter); Tashreeh/Translation/etc. DO use chapters (a ghazal's chapter).
+NO_CHAPTER_FORMATS = {"Essay", "Story", "Application", "Letter", "Mazmoon",
+                      "Darkhwast"}
 FORMAT_QTYPE = {"Essay": "Long", "Story": "Long", "Application": "Long",
                 "Letter": "Long", "Mazmoon": "Long", "Darkhwast": "Long",
                 "Translation": "Short", "Tashreeh": "Short", "Khulasa": "Short",
@@ -1036,6 +1040,22 @@ def api_chapters(sid):
                     for c in Chapter.query.filter_by(subject_id=sid).order_by(Chapter.number).all()])
 
 
+@app.route("/api/bank/<int:sid>")
+@login_required
+def api_bank(sid):
+    """Questions of one subject for the section topic picker:
+    /api/bank/<subject>?format=Essay&qtype=Long -> [{id, text}]."""
+    q = Question.query.filter_by(subject_id=sid)
+    fmt = request.args.get("format")
+    qtype = request.args.get("qtype")
+    if fmt in FORMATS:
+        q = q.filter_by(format=fmt)
+    if qtype in QTYPES:
+        q = q.filter_by(qtype=qtype)
+    rows = q.order_by(Question.chapter_id, Question.id).limit(200).all()
+    return jsonify([{"id": r.id, "text": r.text} for r in rows])
+
+
 # ---------------- Paper generator ----------------
 TYPE_MARKS_DEFAULT = {"MCQ": 1, "Short": 2, "Long": 5, "Numerical": 4}
 TYPE_LABEL = {"MCQ": "MCQs", "Short": "Short Questions", "Long": "Long Questions",
@@ -1127,7 +1147,13 @@ def generator():
                          or TYPE_MARKS_DEFAULT[t]) for t in QTYPES}
         selected, shortfalls = [], []
         used = set()
+        # English/Urdu papers have no Long or Numerical questions at all.
+        subj_obj = db.session.get(Subject, sid)
+        subj_is_lang = bool(subj_obj and ("english" in subj_obj.name.lower()
+                                          or "urdu" in subj_obj.name.lower()))
         for qtype, f_th, f_ex in QTY_FIELDS:
+            if subj_is_lang and qtype in ("Long", "Numerical"):
+                continue
             for source, field in (("Theory", f_th), ("Exercise", f_ex)):
                 n = request.form.get(field, type=int) or 0
                 if n <= 0:
@@ -1163,6 +1189,9 @@ def generator():
             ch_sel = [int(x) for x in request.form.getlist(f"sec_chapters_{i}")
                       if str(x).isdigit()]
             sec_ch_ids = ch_sel or ch_ids
+            if fmt in NO_CHAPTER_FORMATS:
+                # An essay/story is not from any chapter — chapters don't apply.
+                sec_ch_ids = ch_ids
             # Long questions split into part (a) and part (b): each part has
             # its own type, marks and chapters (no chapters ticked = auto).
             parts_on = (request.form.get(f"sec_parts_{i}") == "1"
@@ -1218,13 +1247,36 @@ def generator():
             if fmt in WRITING_FORMATS:
                 if qty <= 0:
                     continue
-                picked, avail = _pick_questions(sec_ch_ids, qtype, None, difficulty,
-                                                qty, used, meta["format"])
-                if len(picked) < qty:
-                    shortfalls.append(f"{sec_title}: asked {qty}, only {avail} available")
-                for qq in picked:
+                # The teacher may have ticked specific topics (essays, stories,
+                # ...); otherwise the app picks itself. Picks come first, in
+                # the order ticked; any shortfall is topped up randomly.
+                pick_ids = [int(x) for x in request.form.getlist(f"sec_pick_{i}")
+                            if str(x).isdigit()]
+                chosen = []
+                if pick_ids:
+                    by_id = {q.id: q for q in Question.query.filter(
+                        Question.id.in_(pick_ids)).all()}
+                    for pid in pick_ids:
+                        qq = by_id.get(pid)
+                        if (qq and qq.subject_id == sid
+                                and qq.format == meta["format"]
+                                and qq.id not in used):
+                            chosen.append(qq)
+                            used.add(qq.id)
+                    chosen = chosen[:qty]
+                if len(chosen) < qty:
+                    picked, avail = _pick_questions(
+                        sec_ch_ids, qtype, None, difficulty,
+                        qty - len(chosen), used, meta["format"])
+                    if len(chosen) + len(picked) < qty:
+                        shortfalls.append(
+                            f"{sec_title}: asked {qty}, only "
+                            f"{len(chosen) + len(picked)} available")
+                    chosen += picked
+                    for qq in picked:
+                        used.add(qq.id)
+                for qq in chosen:
                     selected.append(_snapshot_question(qq, marks, section=sec_title))
-                    used.add(qq.id)
             else:
                 for source, n in (("Theory", n_th), ("Exercise", n_ex)):
                     if n <= 0:

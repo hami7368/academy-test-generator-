@@ -233,7 +233,15 @@ Comprehension, Tashreeh, Khulasa, Mazmoon, Darkhwast, Tarjuma):
 - **Each section has its own chapters**: tick only the chapters it should
   draw from (all ticked = whole book). That is how a full-book test gets two
   Short sections from different chapters, or a Tashreeh section from one
-  ghazal's chapter. Add as many sections as you like — there is no limit.
+  ghazal's chapter. Essay / Story / Application / Letter / Mazmoon /
+  Darkhwast have **no chapters at all** — an essay is not from a chapter,
+  so no chapter boxes show under them. Add as many sections as you like —
+  there is no limit.
+- **Pick the exact topics**: a writing section (Essay, Story, ...) lists the
+  bank's topics of that format — tick the exact ones you want, or leave all
+  unticked and the app picks any itself (ticked ones come first, the rest
+  are topped up automatically). A writing section shows no Question type
+  box and no part (a)/(b) split — an Essay section is just an Essay section.
 - **Long questions with parts (a) and (b)**: in a Long section, tick
   "Split each Long question into part (a) and part (b)". Each part has its
   own type (e.g. (a) a Short question, (b) a Numerical), its own marks
@@ -243,6 +251,14 @@ Comprehension, Tashreeh, Khulasa, Mazmoon, Darkhwast, Tarjuma):
 - Sections print under their own headings in the preview and the PDF, the
   total marks count only the attempted questions, and sections are kept when
   you make a variant (A/B/C) or a copy.
+
+## Subject-wise paper layout
+
+Every subject does **not** get the same quantities grid. English and Urdu
+papers have no Long or Numerical questions, so when you pick English or Urdu
+the quantities grid shows only **MCQ + Short** (the Long/Numerical cards
+disappear, and the server ignores them even if they are submitted). Physics,
+Chemistry, Biology, Mathematics and Computer Science keep all four types.
 
 ## Add a teacher
 
