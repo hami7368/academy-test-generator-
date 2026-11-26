@@ -168,6 +168,16 @@ function fmtOptions(sel){
 }
 function syncSection(block){
   const fmt = block.querySelector('.sec-format').value;
+  // Until a format is chosen, show ONLY the "What to add?" dropdown —
+  // a fresh section used to show every field at once (Question type,
+  // Theory/Exercise, part (a)/(b) with "Numerical"), which confused
+  // teachers before they had even picked Essay or Story.
+  const picked = fmt && fmt !== 'Any';
+  const body = block.querySelector('.sec-body');
+  if(body) body.style.display = picked ? '' : 'none';
+  const pickHint = block.querySelector('.sec-pick-hint');
+  if(pickHint) pickHint.style.display = picked ? 'none' : '';
+  if(!picked){ total(); return; }
   const writing = WRITING.has(fmt);
   if(writing) block.querySelector('.sec-parts').checked = false;
   const parts = block.querySelector('.sec-parts').checked;
@@ -262,6 +272,8 @@ function addSection(p){
   const partTypeOpts = s=>['MCQ','Short','Long','Numerical'].map(t=>'<option'+(s===t?' selected':'')+'>'+t+'</option>').join('');
   d.innerHTML = '<h3>Section</h3>'
     + '<label>What to add? <select class="sec-format" name="sec_format_'+i+'">'+fmtOptions(p.format||'Any')+'</select> <span class="avail sec-avail"></span></label>'
+    + '<p class="muted sec-pick-hint">Pehle upar se choose karein — Essay, Story, Tashreeh ya kuch aur. Us ke baad sirf us se mutaliq cheezein dikhengi.</p>'
+    + '<div class="sec-body">'
     + '<label>Section title: <input class="sec-title" name="sec_title_'+i+'" value="'+esc(p.title)+'" placeholder="e.g. Essay"></label>'
     + '<label>Section instructions (optional): <input name="sec_note_'+i+'" value="'+esc(p.note||'')+'" placeholder="e.g. Write an essay on any ONE of the following topics"></label>'
     + '<div class="sec-topics" hidden><label>Choose topics (optional): <span class="muted">tick the ones you want — leave all unticked and the app picks any itself</span></label><div class="sec-topics-list"><span class="muted">Select a subject first.</span></div></div>'
@@ -281,6 +293,7 @@ function addSection(p){
     + '<div class="sec-chapters"><span class="muted">Select a subject first to pick chapters (all chapters are used until then).</span></div>'
     + '<label><input type="checkbox" class="sec-choice" name="sec_choice_'+i+'" value="1"'+(p.choice?' checked':'')+'> Give choice in this section (students attempt only some questions)</label> '
     + '<span class="sec-attempt-wrap">Attempt any: <input type="number" class="sec-attempt" name="sec_attempt_'+i+'" value="'+(p.attempt||'')+'" min="0" style="width:80px"> out of the above</span>'
+    + '</div>'
     + '<p><button type="button" class="btn btn-secondary" onclick="this.closest(\'[data-sec]\').remove();total()">Remove section</button></p>';
   document.getElementById('sections').appendChild(d);
   d.querySelector('.sec-format').addEventListener('change', ()=>onFormatChange(d));

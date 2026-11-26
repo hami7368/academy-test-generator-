@@ -739,6 +739,18 @@ def test_generator_shortfall_renders_subject_in_html():
     assert b'"subject_list"' in r.data and b'"chapter_list"' in r.data
 
 
+def test_section_gate_markup():
+    """A fresh section shows only the 'What to add?' dropdown — the rest of
+    the fields live inside .sec-body, hidden until a format is picked, so a
+    teacher adding an Essay section never sees 'Numerical' first."""
+    c = make_client()
+    login(c, "teacher@test.com", "TeachPass123")
+    html = c.get("/generator").data.decode()
+    assert "sec-body" in html
+    assert "sec-pick-hint" in html
+    assert "Pehle upar se choose karein" in html
+
+
 def test_generator_shortfall_shows_anyway_totals():
     """The 'generate anyway' warning now says the exact shortfall in marks
     (6 of 16 marks, 4 of 5 questions) instead of just 'shorter'."""
