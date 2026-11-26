@@ -48,6 +48,28 @@ def test_admin_login_and_teacher_login():
     assert b"Teacher Dashboard" in login(c2, "teacher@test.com", "TeachPass123").data
 
 
+def test_admin_password_resets_from_env_vars():
+    """The WSGI env vars are the admin password's source of truth: changing
+    ADMIN_PASSWORD + Reload resets it (previously the env password was only
+    read when the admin was first created, so a forgotten password could
+    never be fixed from the WSGI file)."""
+    c = make_client()
+    assert b"Admin Dashboard" in login(c, "admin@test.com", "AdminPass123").data
+    os.environ["ADMIN_EMAIL"] = "admin@test.com"
+    os.environ["ADMIN_PASSWORD"] = "NewPass456"
+    try:
+        with appmod.app.app_context():
+            assert appmod.ensure_admin_from_env() is True
+            assert appmod.ensure_admin_from_env() is False  # already in sync
+    finally:
+        os.environ.pop("ADMIN_EMAIL", None)
+        os.environ.pop("ADMIN_PASSWORD", None)
+    fresh = appmod.app.test_client()
+    assert b"Admin Dashboard" in login(fresh, "admin@test.com", "NewPass456").data
+    assert b"Invalid email or password" in login(
+        appmod.app.test_client(), "admin@test.com", "AdminPass123").data
+
+
 def test_invalid_email_login_fails():
     c = make_client()
     r = login(c, "nobody@test.com", "whatever123")

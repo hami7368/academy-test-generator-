@@ -271,20 +271,31 @@ def not_found(e):
 
 
 def ensure_admin_from_env():
-    """Create the single owner admin from env vars, if set and no admin exists."""
+    """The single owner admin comes from the env vars (the WSGI file on
+    PythonAnywhere is the source of truth): create it if there is none, and
+    keep its email + password in sync with the env vars on every start.
+    That is also the password reset: change ADMIN_PASSWORD in the WSGI file,
+    Reload the web app, and the new password works immediately."""
     email = (os.environ.get("ADMIN_EMAIL") or "").strip().lower()
     pw = os.environ.get("ADMIN_PASSWORD") or ""
     if not email or not pw:
         return False
-    if User.query.filter_by(role="admin").first():
-        return False
-    if User.query.filter_by(email=email).first():
-        return False
-    u = User(name="Owner / Admin", email=email, role="admin", is_active=True)
-    u.set_password(pw)
-    db.session.add(u)
-    db.session.commit()
-    return True
+    admin = User.query.filter_by(role="admin").first()
+    if admin is None:
+        if User.query.filter_by(email=email).first():
+            return False
+        u = User(name="Owner / Admin", email=email, role="admin", is_active=True)
+        u.set_password(pw)
+        db.session.add(u)
+        db.session.commit()
+        return True
+    if admin.email != email or not admin.check_password(pw):
+        admin.email = email
+        admin.set_password(pw)
+        admin.is_active = True
+        db.session.commit()
+        return True
+    return False
 
 
 def _ensure_column(table, column, ddl):

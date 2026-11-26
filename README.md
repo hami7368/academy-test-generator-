@@ -172,6 +172,15 @@ small batches (a few at a time, not the whole ZIP at once).
   and a password of 8+ characters, and submit. The page locks forever afterwards.
 - There are **no default credentials** (no admin/admin). Never share the admin password.
 
+## Forgot the admin password?
+
+The WSGI file is the source of truth: change `ADMIN_PASSWORD` in the
+WSGI file (`/var/www/testgeneratorhamid_pythonanywhere_com_wsgi.py`) to a
+new password, then run `bash update.sh` and click **Reload** on the Web
+tab. The new password works immediately — the app syncs the admin account
+from the env vars on every start. (Teachers' passwords are reset from the
+Admin Panel → Teachers, not this way.)
+
 ## Import questions from Excel (bulk add)
 
 Typing questions one by one is slow. Instead, fill an Excel sheet and upload it:
