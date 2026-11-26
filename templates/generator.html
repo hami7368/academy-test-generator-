@@ -1,4 +1,5 @@
 {% extends "base.html" %}{% block content %}
+<div class="wizard">
 <h1>Generate Test Paper</h1>
 {% if shortfalls %}
 <div class="card" style="border-color:#f59e0b;background:#fffbeb">
@@ -6,20 +7,40 @@
 <ul>{% for s in shortfalls %}<li>{{ s }}</li>{% endfor %}</ul>
 <p><b>If you generate anyway:</b> the paper will have {{ anyway_count }} of {{ requested_count }} questions and {{ anyway_total }} of {{ requested_total }} marks — the missing questions above will simply not be in the paper. Add them to the Question Bank first if you need the full paper.</p>
 </div>{% endif %}
+<div class="steps" id="steps">
+<span class="step" data-goto="1"><span class="step-n">1</span> Class</span>
+<span class="step" data-goto="2"><span class="step-n">2</span> Subject</span>
+<span class="step" data-goto="3"><span class="step-n">3</span> Questions</span>
+</div>
 <div class="card"><form method="post" id="genform">
 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 {% if shortfalls %}<label><input type="checkbox" name="allow_short" value="1"> Generate anyway — {{ anyway_total }} of {{ requested_total }} marks, {{ anyway_count }} of {{ requested_count }} questions</label>{% endif %}
+<select name="class_level_id" id="cls" required style="display:none"><option value="">— Select class —</option>{% for c in classes %}<option value="{{ c.id }}"{{ ' selected' if form_data and form_data.get('class_level_id') == c.id|string }}>{{ c.name }}</option>{% endfor %}</select>
+<select name="subject_id" id="subj" required style="display:none"><option value="">— Select subject first —</option>{% for s in preset.subject_list %}<option value="{{ s.id }}"{{ ' selected' if preset.subject|string == s.id|string }}>{{ s.name }}</option>{% endfor %}</select>
+<div id="step-1" class="wstep">
+<h2>Step 1 — Class select karein</h2>
+<p class="muted">Kis class ka paper banana hai? Block par click karein.</p>
+<div class="pick-grid">
+{% for c in classes %}<button type="button" class="pick-card" data-class="{{ c.id }}">📖 {{ c.name }}<small>{{ c.subjects.count() }} subjects</small></button>{% endfor %}
+</div>
+<div class="wiz-nav"><span></span><button type="button" class="btn" id="to-step-2">Next — Subject →</button></div>
+</div>
+<div id="step-2" class="wstep" hidden>
+<h2>Step 2 — Subject select karein</h2>
+<p class="muted" id="step2-sub">Kis subject ka paper banana hai?</p>
+<div class="pick-grid" id="subj-grid"></div>
+<div class="wiz-nav"><button type="button" class="btn btn-light" data-back="1">← Back</button><button type="button" class="btn" id="to-step-3">Next — Questions →</button></div>
+</div>
+<div id="step-3" class="wstep" hidden>
+<h2>Step 3 — Kitne questions?</h2>
+<p class="muted" id="step3-sub">Theory aur Exercise alag alag — kitne questions chahiye?</p>
 <div class="row">
 <div><label>Paper title</label><input name="title" value="{{ (form_data.title if form_data else 'Test Paper') }}" required></div>
 <div><label>Paper date</label><input type="date" name="paper_date" value="{{ (form_data.paper_date if form_data else today) }}"></div>
 <div><label>Duration (minutes)</label><input type="number" name="duration_minutes" value="{{ (form_data.duration_minutes if form_data else 60) }}" min="10"></div>
 <div><label>Paper variant</label><select name="variant">{% for v in ['A','B','C'] %}<option{{ ' selected' if (form_data.variant if form_data else 'A') == v }}>{{ v }}</option>{% endfor %}</select></div>
 </div>
-<div class="row">
-<div><label>Class</label><select name="class_level_id" id="cls" required><option value="">— Select class —</option>{% for c in classes %}<option value="{{ c.id }}"{{ ' selected' if form_data and form_data.get('class_level_id') == c.id|string }}>{{ c.name }}</option>{% endfor %}</select></div>
-<div><label>Subject</label><select name="subject_id" id="subj" required><option value="">— Select subject first —</option>{% for s in preset.subject_list %}<option value="{{ s.id }}"{{ ' selected' if preset.subject|string == s.id|string }}>{{ s.name }}</option>{% endfor %}</select></div>
-<div><label>Difficulty</label><select name="difficulty">{% for d in ['Mixed','Easy','Medium','Hard'] %}<option{{ ' selected' if (form_data.difficulty if form_data else 'Mixed') == d }}>{{ d }}</option>{% endfor %}</select></div>
-</div>
+<div class="row"><div><label>Difficulty</label><select name="difficulty">{% for d in ['Mixed','Easy','Medium','Hard'] %}<option{{ ' selected' if (form_data.difficulty if form_data else 'Mixed') == d }}>{{ d }}</option>{% endfor %}</select></div></div>
 <label>Chapter scope</label>
 <select name="scope" id="scope">
 <option value="full"{{ ' selected' if (form_data.scope if form_data else 'full') == 'full' }}>Full book</option>
@@ -47,13 +68,16 @@
 <div id="sections"></div>
 <p><button type="button" class="btn btn-secondary" onclick="addSection()">+ Add Section</button></p>
 <label>Instructions for students</label><textarea name="instructions">{{ (form_data.instructions if form_data else 'Attempt all questions. Write your name and roll number clearly. No extra sheet will be provided.') }}</textarea>
-<div class="sticky-bar"><span><b>Total marks: <span id="total">0</span></b> <span class="muted">(calculated live; also checked on the server)</span></span><button type="submit">Generate Paper</button></div></form></div>
+<div class="wiz-nav"><button type="button" class="btn btn-light" data-back="2">← Back</button><span></span></div>
+<div class="sticky-bar"><span><b>Total marks: <span id="total">0</span></b> <span class="muted">(calculated live; also checked on the server)</span></span><button type="submit">Generate Paper</button></div></div></form></div>
+</div>
 <script>
 const cls=document.getElementById('cls'), subj=document.getElementById('subj');
 cls.onchange=async()=>{ subj.innerHTML='<option value="">— Select subject —</option>';
   CHAPTERS=[]; refreshSectionChapters(); refreshSectionFormats(); syncQtyGrid();
   if(!cls.value) return;
   const r=await fetch('/api/subjects/'+cls.value); const d=await r.json();
+  window._SUBJECTS=d;
   d.forEach(s=>{ const o=document.createElement('option'); o.value=s.id; o.textContent=s.name; subj.appendChild(o); }); };
 subj.onchange=async()=>{ const box=document.getElementById('chapters'); box.innerHTML='';
   if(!subj.value) return;
@@ -314,7 +338,7 @@ function addSection(p){
 // picked, so the class/subject/chapter selects are restored too — the
 // teacher only ticks "Generate anyway" instead of starting over.
 const PRESET = {{ preset|tojson }};
-(async function restorePreset(){
+const restoreDone = (async function restorePreset(){
   if(!PRESET || !PRESET.class){ total(); return; }
   cls.value = PRESET.class;
   // The server already rendered the subject options and chapter boxes for
@@ -352,4 +376,96 @@ const PRESET = {{ preset|tojson }};
   total();
 })();
 total();
+// ---- Paper wizard: Step 1 Class blocks, Step 2 Subject blocks (each
+// subject has its own theme colour), Step 3 questions. One form, one POST
+// — the blocks only drive the hidden class/subject selects, so the server
+// logic is exactly the same as before.
+function applySubjColor(color){
+  document.documentElement.style.setProperty('--subj', color || '#0f766e');
+}
+function showStep(n){
+  [1,2,3].forEach(i=>{ const el=document.getElementById('step-'+i); if(el) el.hidden = (i!==n); });
+  document.querySelectorAll('#steps .step').forEach(p=>{
+    const g=+p.dataset.goto;
+    p.classList.toggle('done', g<n);
+    p.classList.toggle('current', g===n);
+    p.querySelector('.step-n').textContent = g<n ? '✓' : g;
+  });
+  window.scrollTo({top:0, behavior:'smooth'});
+}
+function markClass(id){
+  document.querySelectorAll('#step-1 .pick-card').forEach(b=>b.classList.toggle('selected', String(b.dataset.class)===String(id)));
+}
+function markSubj(id){
+  document.querySelectorAll('#subj-grid .pick-card').forEach(b=>b.classList.toggle('selected', String(b.dataset.subj)===String(id)));
+}
+function buildSubjBlocks(list){
+  const grid=document.getElementById('subj-grid'); grid.innerHTML='';
+  (list||[]).forEach(s=>{
+    const b=document.createElement('button'); b.type='button';
+    b.className='pick-card subj'; b.dataset.subj=s.id;
+    b.style.background=s.color||'#0f766e';
+    b.innerHTML = esc(s.name)+'<small>'+s.chapters+' chapters</small>';
+    b.addEventListener('click', ()=>pickSubject(s.id, s.color));
+    grid.appendChild(b);
+  });
+  if(subj.value) markSubj(subj.value);
+}
+async function gotoStep2(){
+  if(!cls.value) return;
+  if(!document.querySelectorAll('#subj-grid .pick-card').length){
+    const r=await fetch('/api/subjects/'+cls.value); buildSubjBlocks(await r.json());
+  }
+  const nm = cls.selectedOptions[0] ? cls.selectedOptions[0].textContent : '';
+  document.getElementById('step2-sub').textContent = (nm ? nm+' — ' : '') + 'kis subject ka paper banana hai?';
+  showStep(2);
+}
+async function pickClass(id){
+  cls.value=id; markClass(id); applySubjColor('#0f766e');
+  await cls.onchange();  // loads the subjects for this class
+  buildSubjBlocks(window._SUBJECTS || []);
+  const nm = cls.selectedOptions[0] ? cls.selectedOptions[0].textContent : '';
+  document.getElementById('step2-sub').textContent = (nm ? nm+' — ' : '') + 'kis subject ka paper banana hai?';
+  showStep(2);
+}
+async function pickSubject(id, color){
+  subj.value=id; markSubj(id);
+  applySubjColor(color);
+  await subj.onchange();  // loads the chapters for this subject + counts
+  const cn = cls.selectedOptions[0] ? cls.selectedOptions[0].textContent : '';
+  const sn = subj.selectedOptions[0] ? subj.selectedOptions[0].textContent : '';
+  document.getElementById('step3-sub').textContent = (cn && sn ? cn+' · '+sn+' — ' : '') + 'Theory aur Exercise alag alag — kitne questions chahiye?';
+  showStep(3);
+}
+document.querySelectorAll('#step-1 .pick-card').forEach(b=>b.addEventListener('click', ()=>pickClass(b.dataset.class)));
+document.getElementById('to-step-2').addEventListener('click', ()=>{
+  if(!cls.value){ alert('Pehle class select karein.'); return; }
+  gotoStep2();
+});
+document.getElementById('to-step-3').addEventListener('click', ()=>{
+  if(!subj.value){ alert('Pehle subject select karein.'); return; }
+  showStep(3);
+});
+document.querySelectorAll('[data-back]').forEach(b=>b.addEventListener('click', ()=>{
+  if(+b.dataset.back===2) gotoStep2(); else showStep(+b.dataset.back);
+}));
+document.querySelectorAll('#steps .step').forEach(p=>p.addEventListener('click', ()=>{
+  const g=+p.dataset.goto;
+  if(g===1) showStep(1);
+  if(g===2 && cls.value) gotoStep2();
+  if(g===3 && cls.value && subj.value) showStep(3);
+}));
+// Open at the furthest step the server preset already fills: a failed
+// generation (class + subject known) opens straight at Step 3.
+restoreDone.then(()=>{
+  if(PRESET.subject){
+    markClass(PRESET.class); applySubjColor(PRESET.subject_color || '#0f766e');
+    const cn = cls.selectedOptions[0] ? cls.selectedOptions[0].textContent : '';
+    const sn = subj.selectedOptions[0] ? subj.selectedOptions[0].textContent : '';
+    if(cn && sn) document.getElementById('step3-sub').textContent = cn+' · '+sn+' — Theory aur Exercise alag alag — kitne questions chahiye?';
+    showStep(3);
+  }
+  else if(PRESET.class){ markClass(PRESET.class); showStep(2); }
+  else showStep(1);
+});
 </script>{% endblock %}

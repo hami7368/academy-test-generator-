@@ -35,6 +35,27 @@ th{background:#fffbeb}
 @media(max-width:600px){.container{padding:.7rem}h1{font-size:1.4rem}table{font-size:.85rem}.topbar nav a{padding:.35rem .45rem}.topbar{margin:.4rem}}
 @media print{.topbar,.footer,.no-print{display:none!important}.container{max-width:100%}body{background:#fff;font-size:14px}.card{box-shadow:none}}
 .footer{text-align:center;color:#78716c;font-size:.85rem;padding:1rem}
-.sticky-bar{position:sticky;bottom:0;background:#fff;border-top:3px solid #0f766e;border-radius:16px 16px 0 0;padding:.9rem 1.2rem;display:flex;flex-wrap:wrap;gap:.5rem 1rem;align-items:center;justify-content:space-between;z-index:10;box-shadow:0 -4px 14px rgba(120,90,20,.12)}
+.sticky-bar{position:sticky;bottom:0;background:#fff;border-top:3px solid var(--subj,#0f766e);border-radius:16px 16px 0 0;padding:.9rem 1.2rem;display:flex;flex-wrap:wrap;gap:.5rem 1rem;align-items:center;justify-content:space-between;z-index:10;box-shadow:0 -4px 14px rgba(120,90,20,.12)}
 .sticky-bar b{font-size:1.15rem}
 .avail{display:inline-block;background:#dcfce7;color:#15803d;font-size:.85rem;font-weight:700;padding:.1rem .55rem;border-radius:999px}
+/* ---- Paper wizard: Step 1 Class blocks, Step 2 Subject blocks,
+   Step 3 questions. The picked subject's colour drives --subj (set by JS
+   on :root): the top bar, the current step pill and the Generate button. */
+.topbar{background:var(--subj,#0f766e)}
+.steps{display:flex;gap:.6rem;justify-content:center;flex-wrap:wrap;margin:.5rem 0 1.2rem}
+.step{display:inline-flex;align-items:center;gap:.45rem;padding:.45rem 1rem;border-radius:999px;background:#f1ead8;color:#78716c;font-weight:700;cursor:pointer}
+.step .step-n{display:inline-flex;align-items:center;justify-content:center;width:1.5rem;height:1.5rem;border-radius:50%;background:rgba(0,0,0,.12);font-size:.9rem}
+.step.done{background:#dcfce7;color:#15803d}
+.step.current{background:var(--subj,#0f766e);color:#fff}
+.step.current .step-n{background:rgba(255,255,255,.25)}
+.pick-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:1rem}
+.pick-card{display:block;width:100%;text-align:left;background:#fff;border:2px solid #e7e0cf;border-radius:16px;padding:1.1rem 1.2rem;cursor:pointer;font-size:1.15rem;font-weight:700;color:#292524}
+.pick-card small{display:block;font-weight:600;color:#78716c;font-size:.9rem;margin-top:.25rem}
+.pick-card:hover{border-color:var(--subj,#0f766e)}
+.pick-card.selected{border-color:var(--subj,#0f766e);background:#f0fdfa;box-shadow:0 0 0 3px rgba(15,118,110,.15)}
+.pick-card.subj{color:#fff;border-color:transparent}
+.pick-card.subj small{color:rgba(255,255,255,.85)}
+.pick-card.subj.selected{box-shadow:0 0 0 3px rgba(0,0,0,.3),0 0 0 6px #fff}
+.wiz-nav{display:flex;justify-content:space-between;gap:1rem;margin-top:1.2rem}
+.wiz-nav .btn{margin:0}
+.wizard .sticky-bar button{background:var(--subj,#0f766e)}

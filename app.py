@@ -82,6 +82,27 @@ FORMAT_QTYPE = {"Essay": "Long", "Story": "Long", "Application": "Long",
                 "Translation": "Short", "Tashreeh": "Short", "Khulasa": "Short",
                 "Tarjuma": "Short", "Comprehension": "Short", "Tenses": "Short"}
 FORMAT_MARKS = {"Essay": 10, "Story": 10, "Mazmoon": 10}
+# One theme colour per subject (wizard Step 2 blocks + Step 3 accent).
+# Admin-added subjects fall back to the app teal.
+SUBJECT_COLORS = {
+    "Physics": "#2563eb",
+    "Chemistry": "#7c3aed",
+    "Biology": "#16a34a",
+    "Mathematics": "#ea580c",
+    "English": "#e11d48",
+    "Urdu": "#166534",
+    "Computer Science": "#0891b2",
+}
+DEFAULT_SUBJECT_COLOR = "#0f766e"
+
+
+def subject_color(subject_name):
+    """Theme colour for a subject, matched by name."""
+    name = (subject_name or "").lower()
+    for key, color in SUBJECT_COLORS.items():
+        if key.lower() in name:
+            return color
+    return DEFAULT_SUBJECT_COLOR
 
 
 def formats_for_subject(subject_name):
@@ -1145,8 +1166,12 @@ def question_import_template():
 @app.route("/api/subjects/<int:cid>")
 @login_required
 def api_subjects(cid):
-    return jsonify([{"id": s.id, "name": s.name}
-                    for s in Subject.query.filter_by(class_level_id=cid).all()])
+    out = []
+    for s in Subject.query.filter_by(class_level_id=cid).all():
+        out.append({"id": s.id, "name": s.name,
+                    "chapters": Chapter.query.filter_by(subject_id=s.id).count(),
+                    "color": subject_color(s.name)})
+    return jsonify(out)
 
 
 @app.route("/api/chapters/<int:sid>")
@@ -1300,7 +1325,9 @@ def generator():
                   "chapter_list": [{"id": ch.id, "number": ch.number, "name": ch.name}
                                    for ch in
                                    Chapter.query.filter_by(subject_id=sid)
-                                   .order_by(Chapter.number).all()] if sid else []}
+                                   .order_by(Chapter.number).all()] if sid else [],
+                  "subject_color": subject_color(db.session.get(Subject, sid).name)
+                                   if sid and db.session.get(Subject, sid) else DEFAULT_SUBJECT_COLOR}
         if not (cid and sid):
             flash("Select a class and a subject.", "error")
             return render_template("generator.html", classes=classes,
@@ -1536,7 +1563,8 @@ def generator():
     return render_template("generator.html", classes=classes, formats=FORMATS, format_groups=FORMAT_GROUPS,
                            preset_sections=[], preset={"class": "", "subject": "",
                                                       "chapters": [], "scope": "full",
-                                                      "subject_list": [], "chapter_list": []},
+                                                      "subject_list": [], "chapter_list": [],
+                                                      "subject_color": DEFAULT_SUBJECT_COLOR},
                            today=date.today().isoformat())
 
 

@@ -693,6 +693,45 @@ def test_dashboard_greeting_not_duplicated():
     assert b"(Owner / Admin)" not in r.data
 
 
+def test_api_subjects_returns_chapters_and_color():
+    c = make_client()
+    login(c, "teacher@test.com", "TeachPass123")
+    with appmod.app.app_context():
+        cl = appmod.ClassLevel.query.filter_by(name="Class 9th").first()
+        phys = appmod.Subject.query.filter_by(name="Physics", class_level_id=cl.id).first()
+        n_ch = appmod.Chapter.query.filter_by(subject_id=phys.id).count()
+    d = c.get(f"/api/subjects/{cl.id}").get_json()
+    by_name = {s["name"]: s for s in d}
+    assert by_name["English"]["color"] == "#e11d48"
+    assert by_name["Physics"]["color"] == "#2563eb"
+    assert by_name["Physics"]["chapters"] == n_ch
+    assert by_name["Urdu"]["color"] == "#166534"
+
+
+def test_generator_wizard_steps():
+    """New Paper is a 3-step wizard: Class blocks, Subject blocks, then
+    questions — one form, one POST, same field names as before."""
+    c = make_client()
+    login(c, "teacher@test.com", "TeachPass123")
+    html = c.get("/generator").data.decode()
+    for frag in ['id="step-1"', 'id="step-2"', 'id="step-3"',
+                'Step 1 — Class select karein', 'Step 2 — Subject select karein',
+                'Step 3 — Kitne questions?', 'id="steps"',
+                'pick-card', 'data-class', 'id="subj-grid"',
+                '7 subjects', 'name="class_level_id"', 'name="subject_id"']:
+        assert frag in html, frag
+    # The shortfall page still carries the preset and opens at Step 3.
+    with appmod.app.app_context():
+        cl = appmod.ClassLevel.query.filter_by(name="Class 9th").first()
+        subj = appmod.Subject.query.filter_by(name="English", class_level_id=cl.id).first()
+    data = _gen_data(cl.id, subj.id, mcq_theory=2, short_theory=2,
+                     sec_title_0="Essay", sec_qtype_0="Long", sec_format_0="Essay",
+                     sec_qty_0=1, sec_marks_0=10)
+    r = c.post("/generator", data=data)
+    assert b"restoreDone.then" in r.data
+    assert b'"subject_color": "#e11d48"' in r.data
+
+
 def test_api_counts():
     c = make_client()
     login(c, "teacher@test.com", "TeachPass123")
