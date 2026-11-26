@@ -64,7 +64,7 @@
 </div>{% endfor %}
 </div>
 <h2>Custom sections — optional</h2>
-<p class="muted">Need an Essay, Tashreeh, Translation or any other part? Click <b>+ Add Section</b>, choose what to add, and set its chapters, marks and choice. Essay / Tashreeh / Translation have no Theory / Exercise — just say how many. Each section can cover different chapters, so you can have two Short sections from different chapters. Add as many sections as you like — there is no limit. A Long section can also be split into <b>part (a) and part (b)</b> (e.g. (a) a Short question and (b) a Numerical), each part with its own chapters — leave all chapter boxes ticked and the app picks from any chapter itself.</p>
+<p class="muted">Need an Essay, Tashreeh, Translation or any other part? Click <b>+ Add Section</b>, choose what to add, and set its chapters, marks and choice. Essay / Tashreeh / Translation have no Theory / Exercise — just say how many. Each section can cover different chapters, so you can have two Short sections from different chapters. Add as many sections as you like — there is no limit. A Long section can also be split into <b>part (a) and part (b)</b> (e.g. (a) a Short question and (b) a Numerical, for science and maths papers), each part with its own chapters — leave all chapter boxes ticked and the app picks from any chapter itself.</p>
 <div id="sections"></div>
 <p><button type="button" class="btn btn-secondary" onclick="addSection()">+ Add Section</button></p>
 <label>Instructions for students</label><textarea name="instructions">{{ (form_data.instructions if form_data else 'Attempt all questions. Write your name and roll number clearly. No extra sheet will be provided.') }}</textarea>
@@ -429,7 +429,13 @@ async function pickClass(id){
   showStep(2);
 }
 async function pickSubject(id, color){
-  subj.value=id; markSubj(id);
+  // A section belongs to its subject (Essay is English-only, Tashreeh is
+  // Urdu-only), so picking a DIFFERENT subject drops the old sections —
+  // otherwise an English Essay section would silently ride into a Physics
+  // paper. Re-picking the same subject, or just going Back, keeps them.
+  const changed = id !== subj.value;
+  subj.value=id; markSubj(id); lastSubjVal=id;
+  if(changed) clearSections();
   applySubjColor(color);
   await subj.onchange();  // loads the chapters for this subject + counts
   const cn = cls.selectedOptions[0] ? cls.selectedOptions[0].textContent : '';
@@ -437,6 +443,12 @@ async function pickSubject(id, color){
   document.getElementById('step3-sub').textContent = (cn && sn ? cn+' · '+sn+' — ' : '') + 'Theory aur Exercise alag alag — kitne questions chahiye?';
   showStep(3);
 }
+function clearSections(){ document.querySelectorAll('[data-sec]').forEach(b=>b.remove()); }
+// The Step 3 subject dropdown changes the subject too — same rule as the
+// wizard blocks. Programmatic sets (restore after a failed generation)
+// do not fire 'change', so the restored sections are safe.
+let lastSubjVal = subj.value;
+subj.addEventListener('change', ()=>{ if(subj.value && subj.value!==lastSubjVal) clearSections(); lastSubjVal = subj.value; });
 document.querySelectorAll('#step-1 .pick-card').forEach(b=>b.addEventListener('click', ()=>pickClass(b.dataset.class)));
 document.getElementById('to-step-2').addEventListener('click', ()=>{
   if(!cls.value){ alert('Pehle class select karein.'); return; }

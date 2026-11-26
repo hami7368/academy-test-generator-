@@ -672,6 +672,42 @@ def test_delete_paper():
         assert appmod.Paper.query.get(pid) is None
 
 
+def test_delete_uses_two_step_confirm_not_native_dialog():
+    """Live check 2026-11-26: the Delete buttons did nothing in the cloud
+    browser — the native confirm() dialog never appeared. Deletion must not
+    depend on confirm(): exactly one delete route, and both delete forms use
+    the two-step arm-then-submit handler instead."""
+    rules = [r for r in appmod.app.url_map.iter_rules()
+             if str(r) == "/papers/<int:pid>/delete"]
+    assert len(rules) == 1
+    c = make_client()
+    login(c, "admin@test.com", "AdminPass123")
+    with appmod.app.app_context():
+        cl = appmod.ClassLevel.query.filter_by(name="Class 9th").first()
+        subj = appmod.Subject.query.filter_by(name="Physics", class_level_id=cl.id).first()
+    c.post("/generator", data=_gen_data(cl.id, subj.id, mcq_theory=2))
+    with appmod.app.app_context():
+        pid = appmod.Paper.query.filter_by(title="Phase 1 Test Paper").first().id
+    view = c.get(f"/papers/{pid}").data.decode()
+    assert "data-confirm-delete" in view
+    assert "return confirm(" not in view
+    hist = c.get("/history").data.decode()
+    assert "data-confirm-delete" in hist
+    assert "return confirm(" not in hist
+
+
+def test_subject_change_drops_custom_sections():
+    """Live check 2026-11-26: an Essay section added for English carried
+    over when the teacher switched to Physics. Picking a different subject
+    must drop the old sections; re-picking the same one must keep them."""
+    c = make_client()
+    login(c, "admin@test.com", "AdminPass123")
+    html = c.get("/generator").data.decode()
+    assert "function clearSections()" in html
+    assert "if(changed) clearSections();" in html
+    assert "subj.addEventListener('change'" in html
+
+
 def test_teacher_cannot_delete_others_paper():
     c = make_client()
     login(c, "admin@test.com", "AdminPass123")

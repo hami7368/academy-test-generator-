@@ -43,6 +43,24 @@
 <footer class="footer">Academy Test Generator — Punjab Board • Private, invitation-only app</footer>
 <script>
 if ('serviceWorker' in navigator) { navigator.serviceWorker.register('/sw.js').catch(function(){}); }
+// Delete buttons: first click arms the button ("Sure? Click again"), the
+// second click submits. Native confirm() dialogs are unreliable in some
+// browsers and automation, so deletion never depends on one.
+document.querySelectorAll('form[data-confirm-delete]').forEach(function (f) {
+  var btn = f.querySelector('button[type="submit"]');
+  var label = btn ? btn.textContent : '';
+  f.addEventListener('submit', function (e) {
+    if (!f.dataset.armed) {
+      e.preventDefault();
+      f.dataset.armed = '1';
+      if (btn) { btn.textContent = 'Sure? Click again to delete'; btn.classList.add('btn-danger'); }
+      setTimeout(function () {
+        delete f.dataset.armed;
+        if (btn) { btn.textContent = label; btn.classList.remove('btn-danger'); }
+      }, 5000);
+    }
+  });
+});
 </script>
 </body>
 </html>

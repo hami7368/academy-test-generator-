@@ -1766,16 +1766,6 @@ def paper_duplicate(pid):
     return redirect(url_for("paper_view", pid=copy.id))
 
 
-@app.route("/papers/<int:pid>/delete", methods=["POST"])
-@login_required
-def paper_delete(pid):
-    p = _get_paper(pid)
-    db.session.delete(p)
-    db.session.commit()
-    flash("Paper deleted.", "success")
-    return redirect(url_for("history"))
-
-
 @app.route("/history")
 @login_required
 def history():

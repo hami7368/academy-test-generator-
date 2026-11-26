@@ -27,7 +27,7 @@ Date: {{ paper.paper_date|pkdate }} · Time: {{ paper.duration_minutes }} minute
 <label>Create variant: <select name="variant" style="width:80px;display:inline-block">{% for v in ['A','B','C'] if v != paper.variant %}<option>{{ v }}</option>{% endfor %}</select></label>
 <button class="btn btn-secondary" type="submit">Create variant (different questions)</button></form>
 <form method="post" action="/papers/{{ paper.id }}/duplicate" class="no-print" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-secondary" type="submit">Copy this paper</button></form>
-<form method="post" action="/papers/{{ paper.id }}/delete" class="no-print" style="display:inline" onsubmit="return confirm('Delete this paper? This cannot be undone.');"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-secondary" type="submit">Delete paper</button></form>
+<form method="post" action="/papers/{{ paper.id }}/delete" class="no-print" style="display:inline" data-confirm-delete><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-secondary" type="submit">Delete paper</button></form>
 </div>
 {% set ns = namespace(n=0) %}
 {% for qtype in ['MCQ','Short','Long','Numerical'] %}
