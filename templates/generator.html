@@ -11,21 +11,21 @@
 {% if shortfalls %}<label><input type="checkbox" name="allow_short" value="1"> Generate anyway with the available questions (I understand the paper will be shorter than asked)</label>{% endif %}
 <div class="row">
 <div><label>Paper title</label><input name="title" value="{{ (form_data.title if form_data else 'Test Paper') }}" required></div>
-<div><label>Paper date</label><input type="date" name="paper_date" value="{{ (form_data.paper_date if form_data else '') }}"></div>
+<div><label>Paper date</label><input type="date" name="paper_date" value="{{ (form_data.paper_date if form_data else today) }}"></div>
 <div><label>Duration (minutes)</label><input type="number" name="duration_minutes" value="{{ (form_data.duration_minutes if form_data else 60) }}" min="10"></div>
-<div><label>Paper variant</label><select name="variant">{% for v in ['A','B','C'] %}<option>{{ v }}</option>{% endfor %}</select></div>
+<div><label>Paper variant</label><select name="variant">{% for v in ['A','B','C'] %}<option{{ ' selected' if (form_data.variant if form_data else 'A') == v }}>{{ v }}</option>{% endfor %}</select></div>
 </div>
 <div class="row">
-<div><label>Class</label><select name="class_level_id" id="cls" required><option value="">— Select class —</option>{% for c in classes %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}</select></div>
+<div><label>Class</label><select name="class_level_id" id="cls" required><option value="">— Select class —</option>{% for c in classes %}<option value="{{ c.id }}"{{ ' selected' if form_data and form_data.get('class_level_id') == c.id|string }}>{{ c.name }}</option>{% endfor %}</select></div>
 <div><label>Subject</label><select name="subject_id" id="subj" required><option value="">— Select subject first —</option></select></div>
-<div><label>Difficulty</label><select name="difficulty"><option>Mixed</option><option>Easy</option><option>Medium</option><option>Hard</option></select></div>
+<div><label>Difficulty</label><select name="difficulty">{% for d in ['Mixed','Easy','Medium','Hard'] %}<option{{ ' selected' if (form_data.difficulty if form_data else 'Mixed') == d }}>{{ d }}</option>{% endfor %}</select></div>
 </div>
 <label>Chapter scope</label>
 <select name="scope" id="scope">
-<option value="full">Full book</option>
-<option value="half">Half book (first half of chapters)</option>
-<option value="one">One chapter</option>
-<option value="multiple">Multiple / custom chapters</option>
+<option value="full"{{ ' selected' if (form_data.scope if form_data else 'full') == 'full' }}>Full book</option>
+<option value="half"{{ ' selected' if (form_data.scope if form_data else 'full') == 'half' }}>Half book (first half of chapters)</option>
+<option value="one"{{ ' selected' if (form_data.scope if form_data else 'full') == 'one' }}>One chapter</option>
+<option value="multiple"{{ ' selected' if (form_data.scope if form_data else 'full') == 'multiple' }}>Multiple / custom chapters</option>
 </select>
 <div id="chapbox" style="display:none"><label>Choose chapter(s)</label><div id="chapters"></div></div>
 <h2>Quantities — Theory and Exercise are separate</h2>
@@ -33,10 +33,10 @@
 <div class="qty-grid">
 {% for t, th, ex, m in [('MCQ','mcq_theory','mcq_exercise',1),('Short','short_theory','short_exercise',2),('Long','long_theory','long_exercise',5),('Numerical','num_theory','num_exercise',4)] %}
 <div class="card" data-qtype="{{ t }}"><h3>{{ t }}</h3>
-<label>Theory: <input type="number" class="qty" data-marks="{{ m }}" name="{{ th }}" value="0" min="0"> questions</label>
-<label>Exercise: <input type="number" class="qty" data-marks="{{ m }}" name="{{ ex }}" value="0" min="0"> questions</label>
+<label>Theory: <input type="number" class="qty" data-marks="{{ m }}" name="{{ th }}" value="{{ (form_data[th] if form_data and th in form_data else 0) }}" min="0"> questions</label>
+<label>Exercise: <input type="number" class="qty" data-marks="{{ m }}" name="{{ ex }}" value="{{ (form_data[ex] if form_data and ex in form_data else 0) }}" min="0"> questions</label>
 <label>Attempt any: <input type="number" class="attempt" data-type="{{ t }}" name="attempt_{{ t|lower }}" value="{{ (form_data['attempt_' + t|lower] if form_data else '') }}" min="0" placeholder="all" style="width:80px"> out of the above (blank = attempt all)</label>
-<label>Marks per {{ t }}: <input type="number" class="mpq" data-type="{{ t }}" name="marks_{{ t|lower }}" value="{{ m }}" min="1" style="width:80px"></label>
+<label>Marks per {{ t }}: <input type="number" class="mpq" data-type="{{ t }}" name="marks_{{ t|lower }}" value="{{ (form_data['marks_' + t|lower] if form_data else m) }}" min="1" style="width:80px"></label>
 </div>{% endfor %}
 </div>
 <h2>Custom sections — optional</h2>
@@ -44,7 +44,7 @@
 <div id="sections"></div>
 <p><button type="button" class="btn btn-secondary" onclick="addSection()">+ Add Section</button></p>
 <p><b>Total marks: <span id="total">0</span></b> (calculated live; also checked on the server)</p>
-<label>Instructions for students</label><textarea name="instructions">Attempt all questions. Write your name and roll number clearly. No extra sheet will be provided.</textarea>
+<label>Instructions for students</label><textarea name="instructions">{{ (form_data.instructions if form_data else 'Attempt all questions. Write your name and roll number clearly. No extra sheet will be provided.') }}</textarea>
 <button type="submit">Generate Paper</button></form></div>
 <script>
 const cls=document.getElementById('cls'), subj=document.getElementById('subj');
@@ -160,7 +160,7 @@ async function loadTopics(block){
   const r = await fetch('/api/bank/'+subj.value+'?format='+encodeURIComponent(fmt)+'&qtype='+encodeURIComponent(qtype));
   const d = await r.json();
   const i = block.dataset.idx;
-  if(!d.length){ list.innerHTML = '<span class="muted">No '+esc(fmt)+' questions in the bank yet — add some first, or leave this empty and the app picks itself later.</span>'; return; }
+  if(!d.length){ list.innerHTML = '<span class="muted">No '+esc(fmt)+' questions in the bank yet — add some first (Add Question, or Excel import in the Question Bank). This section cannot generate until then.</span>'; return; }
   list.innerHTML = '';
   d.forEach(q=>{
     const l=document.createElement('label'); l.style.display='block';
@@ -244,7 +244,44 @@ function addSection(p){
   d.querySelector('.sec-parts').addEventListener('change', ()=>syncSection(d));
   refreshSectionChapters();
   syncSection(d);
+  // Restore this section's own chapter ticks after a failed generation
+  // (all boxes start ticked; only narrow them when the teacher had done so).
+  const tickOnly = (box, ids)=>{ if(!box || !ids || !ids.length) return;
+    box.querySelectorAll('input[type=checkbox]').forEach(cb=>{ cb.checked = ids.map(String).includes(cb.value); }); };
+  tickOnly(d.querySelector('.sec-chapters'), p.chapters);
+  tickOnly(d.querySelector('.sec-parta-chapters'), p.parta_chapters);
+  tickOnly(d.querySelector('.sec-partb-chapters'), p.partb_chapters);
 }
 (PRESET_SECTIONS || []).forEach(addSection);
+// After a failed generation the server sends back what the teacher had
+// picked, so the class/subject/chapter selects are restored too — the
+// teacher only ticks "Generate anyway" instead of starting over.
+const PRESET = {{ preset|tojson }};
+(async function restorePreset(){
+  if(!PRESET || !PRESET.class){ total(); return; }
+  cls.value = PRESET.class;
+  await cls.onchange();  // loads the subjects for this class
+  if(PRESET.subject){
+    subj.value = PRESET.subject;
+    await subj.onchange();  // loads the chapters for this subject
+    if(PRESET.chapters && PRESET.chapters.length){
+      document.querySelectorAll('#chapters input[type=checkbox]').forEach(cb=>{
+        cb.checked = PRESET.chapters.map(String).includes(cb.value); });
+    }
+    // Restore each section's own chapter ticks too — they were all ticked
+    // while the chapters were still loading.
+    document.querySelectorAll('[data-sec]').forEach((block, k)=>{
+      const p = (PRESET_SECTIONS||[])[k]; if(!p) return;
+      const tickOnly = (box, ids)=>{ if(!box || !ids || !ids.length) return;
+        box.querySelectorAll('input[type=checkbox]').forEach(cb=>{ cb.checked = ids.map(String).includes(cb.value); }); };
+      tickOnly(block.querySelector('.sec-chapters'), p.chapters);
+      tickOnly(block.querySelector('.sec-parta-chapters'), p.parta_chapters);
+      tickOnly(block.querySelector('.sec-partb-chapters'), p.partb_chapters);
+    });
+  }
+  document.getElementById('chapbox').style.display =
+    (PRESET.scope==='full'||PRESET.scope==='half') ? 'none' : 'block';
+  total();
+})();
 total();
 </script>{% endblock %}

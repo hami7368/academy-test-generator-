@@ -535,6 +535,164 @@ def test_setup_locks_after_admin_exists():
     assert b"already exists" in r.data.lower() or b"Login" in r.data
 
 
+def _gen_data(cl_id, subj_id, **over):
+    data = {"title": "Phase 1 Test Paper", "class_level_id": cl_id,
+            "subject_id": subj_id, "scope": "full", "difficulty": "Mixed",
+            "duration_minutes": 60, "paper_date": "2026-11-26", "variant": "A",
+            "mcq_theory": 0, "mcq_exercise": 0, "short_theory": 0,
+            "short_exercise": 0, "long_theory": 0, "long_exercise": 0,
+            "num_theory": 0, "num_exercise": 0,
+            "marks_mcq": 1, "marks_short": 2, "marks_long": 5, "marks_numerical": 4,
+            "instructions": "Attempt all questions."}
+    data.update(over)
+    return data
+
+
+def test_generator_keeps_form_on_shortfall():
+    """The audit's critical bug: a failed generation wiped the whole form.
+    Now the class, subject, date, variant, quantities and the Essay section
+    all come back exactly as the teacher filled them."""
+    c = make_client()
+    login(c, "teacher@test.com", "TeachPass123")
+    with appmod.app.app_context():
+        cl = appmod.ClassLevel.query.filter_by(name="Class 9th").first()
+        subj = appmod.Subject.query.filter_by(name="English", class_level_id=cl.id).first()
+        data = _gen_data(cl.id, subj.id, mcq_theory=2, short_theory=2, variant="B",
+                         sec_title_0="Essay", sec_qtype_0="Long", sec_format_0="Essay",
+                         sec_qty_0=1, sec_marks_0=10)
+        r = c.post("/generator", data=data)
+        assert r.status_code == 200
+        body = r.data
+        # Only the Essay (0 in the bank) is short — MCQ/Short were available.
+        assert b"asked 1, only 0 available" in body
+        assert b"asked 2, only" not in body
+        # Everything the teacher typed is still there.
+        assert f'<option value="{cl.id}" selected'.encode() in body
+        assert f'"subject": "{subj.id}"'.encode() in body
+        assert b'name="mcq_theory" value="2"' in body
+        assert b'name="short_theory" value="2"' in body
+        assert b'name="paper_date" value="2026-11-26"' in body
+        assert b"<option selected>B</option>" in body
+        # The section itself is built by JS from this JSON, so the preset
+        # lives in the page as data — that is what the server must preserve.
+        assert b'"title": "Essay"' in body
+        assert b'"format": "Essay"' in body
+        assert b'"qty": 1' in body
+        # And no paper was created.
+        assert appmod.Paper.query.filter_by(title="Phase 1 Test Paper").first() is None
+
+
+def test_paper_preview_looks_like_a_real_exam_paper():
+    c = make_client()
+    login(c, "teacher@test.com", "TeachPass123")
+    with appmod.app.app_context():
+        cl = appmod.ClassLevel.query.filter_by(name="Class 9th").first()
+        subj = appmod.Subject.query.filter_by(name="Physics", class_level_id=cl.id).first()
+    r = c.post("/generator", data=_gen_data(cl.id, subj.id, mcq_theory=2, short_theory=2),
+               follow_redirects=True)
+    assert r.status_code == 200
+    body = r.data
+    assert b"26 November 2026" in body          # Pakistani date, not ISO
+    assert b"[1 mark]" in body                  # not "[1 marks]"
+    assert b"[2 marks]" in body
+    assert b"(Theory" not in body               # no internal metadata on the student paper
+    assert b"Name:" in body and b"Roll No:" in body
+    assert b"(2 marks)" in body                 # MCQ section total: 2 x 1
+    assert b"(4 marks)" in body                 # Short section total: 2 x 2
+    assert b"<option>B</option>" in body and b"<option>C</option>" in body
+    assert b"<option>A</option>" not in body    # current variant A is not offered
+    assert b"/delete" in body
+
+
+def _pdf_text(data):
+    """Extract the literal text of a ReportLab PDF by decoding its streams
+    (ReportLab wraps them in ASCII85 + Flate, so plain text never appears
+    in the raw bytes)."""
+    import re, zlib, base64
+    out = []
+    for m in re.finditer(rb"stream\r?\n(.*?)endstream", data, re.S):
+        raw = m.group(1).strip()
+        for decoder in (lambda b: zlib.decompress(base64.a85decode(b, adobe=True)),
+                        lambda b: zlib.decompress(b)):
+            try:
+                out.append(decoder(raw).decode("latin-1", "replace"))
+                break
+            except Exception:
+                continue
+    return "\n".join(out)
+
+
+def test_paper_pdf_uses_pakistani_date_and_mark_grammar():
+    c = make_client()
+    login(c, "teacher@test.com", "TeachPass123")
+    with appmod.app.app_context():
+        cl = appmod.ClassLevel.query.filter_by(name="Class 9th").first()
+        subj = appmod.Subject.query.filter_by(name="Physics", class_level_id=cl.id).first()
+        teacher = appmod.User.query.filter_by(email="teacher@test.com").first()
+        paper = appmod.Paper(title="PDF Check", teacher_id=teacher.id,
+                             class_level_id=cl.id, subject_id=subj.id, variant="A",
+                             total_marks=6, duration_minutes=60,
+                             instructions="Attempt all questions.",
+                             paper_date="2026-11-26",
+                             questions_json=json.dumps([
+                                 {"id": 1, "text": "What is 2+2?", "qtype": "MCQ",
+                                  "source": "Theory", "marks": 1,
+                                  "options": ["3", "4", "5", "6"], "correct_option": "B",
+                                  "answer": "", "chapter": "Ch 1", "format": "General",
+                                  "section": ""}]),
+                             attempt_json="{}", sections_json="[]")
+        appmod.db.session.add(paper)
+        appmod.db.session.commit()
+        pid = paper.id
+    r = c.get(f"/papers/{pid}/pdf")
+    assert r.status_code == 200
+    assert "application/pdf" in r.content_type
+    assert len(r.data) > 1000
+    text = _pdf_text(r.data)
+    assert "26 November 2026" in text
+    assert "[1 mark]" in text
+    assert "Name:" in text and "Roll No:" in text
+
+
+def test_delete_paper():
+    c = make_client()
+    login(c, "teacher@test.com", "TeachPass123")
+    with appmod.app.app_context():
+        cl = appmod.ClassLevel.query.filter_by(name="Class 9th").first()
+        subj = appmod.Subject.query.filter_by(name="Physics", class_level_id=cl.id).first()
+    c.post("/generator", data=_gen_data(cl.id, subj.id, mcq_theory=2))
+    with appmod.app.app_context():
+        paper = appmod.Paper.query.filter_by(title="Phase 1 Test Paper").first()
+        assert paper is not None
+        pid = paper.id
+    r = c.post(f"/papers/{pid}/delete", follow_redirects=True)
+    assert r.status_code == 200
+    assert b"deleted" in r.data
+    with appmod.app.app_context():
+        assert appmod.Paper.query.get(pid) is None
+
+
+def test_teacher_cannot_delete_others_paper():
+    c = make_client()
+    login(c, "admin@test.com", "AdminPass123")
+    with appmod.app.app_context():
+        cl = appmod.ClassLevel.query.filter_by(name="Class 9th").first()
+        subj = appmod.Subject.query.filter_by(name="Physics", class_level_id=cl.id).first()
+    c.post("/generator", data=_gen_data(cl.id, subj.id, mcq_theory=2))
+    with appmod.app.app_context():
+        pid = appmod.Paper.query.filter_by(title="Phase 1 Test Paper").first().id
+    c.get("/logout", follow_redirects=True)
+    login(c, "teacher@test.com", "TeachPass123")
+    assert c.post(f"/papers/{pid}/delete").status_code == 403
+
+
+def test_dashboard_greeting_not_duplicated():
+    c = make_client()
+    r = login(c, "admin@test.com", "AdminPass123")
+    assert b"Welcome, Owner" in r.data
+    assert b"(Owner / Admin)" not in r.data
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

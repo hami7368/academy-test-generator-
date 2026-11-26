@@ -3,18 +3,19 @@
 <div class="qbox"><b>Q{{ n }}.</b>
 {% if q.parts %}
   {% for part in q.parts %}
-  <div><b>({{ 'ab'[loop.index0] }})</b> {{ part.text }} <b>[{{ part.marks }} marks]</b> <span class="muted">({{ part.chapter }})</span>
+  <div><b>({{ 'ab'[loop.index0] }})</b> {{ part.text }} <b>[{{ part.marks|marks }}]</b>
   {% if part.options %}<ol type="A">{% for o in part.options %}<li>{{ o }}</li>{% endfor %}</ol>{% endif %}</div>
   {% endfor %}
 {% else %}
-  {{ q.text }} <b>[{{ q.marks }} marks]</b> <span class="muted">({{ q.source }} · {{ q.chapter }})</span>
+  {{ q.text }} <b>[{{ q.marks|marks }}]</b>
   {% if q.options %}<ol type="A">{% for o in q.options %}<li>{{ o }}</li>{% endfor %}</ol>{% endif %}
 {% endif %}</div>
 {% endmacro %}
 <div class="card">
 <h1>{{ paper.title }} — Paper {{ paper.variant }}</h1>
 <p><b>{{ academy_name }}</b> · {{ paper.class_level.name if paper.class_level }} · {{ paper.subject.name if paper.subject }}<br>
-Date: {{ paper.paper_date }} · Time: {{ paper.duration_minutes }} minutes · Total Marks: {{ paper.total_marks }}</p>
+Date: {{ paper.paper_date|pkdate }} · Time: {{ paper.duration_minutes }} minutes · Total Marks: {{ paper.total_marks }}</p>
+<p>Name: ______________________ &nbsp;&nbsp; Roll No: __________ &nbsp;&nbsp; Section: __________</p>
 {% if paper.instructions %}<p><b>Instructions:</b> {{ paper.instructions }}</p>{% endif %}
 <p class="no-print">
 <a class="btn" href="/papers/{{ paper.id }}/pdf">Download PDF</a>
@@ -23,20 +24,21 @@ Date: {{ paper.paper_date }} · Time: {{ paper.duration_minutes }} minutes · To
 <a class="btn btn-secondary" href="#" onclick="window.print();return false">Print</a>
 </p>
 <form method="post" action="/generator/variant/{{ paper.id }}" class="no-print" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-<select name="variant" style="width:130px;display:inline-block"><option>B</option><option>C</option><option>A</option></select>
+<label>Create variant: <select name="variant" style="width:80px;display:inline-block">{% for v in ['A','B','C'] if v != paper.variant %}<option>{{ v }}</option>{% endfor %}</select></label>
 <button class="btn btn-secondary" type="submit">Create variant (different questions)</button></form>
 <form method="post" action="/papers/{{ paper.id }}/duplicate" class="no-print" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-secondary" type="submit">Copy this paper</button></form>
+<form method="post" action="/papers/{{ paper.id }}/delete" class="no-print" style="display:inline" onsubmit="return confirm('Delete this paper? This cannot be undone.');"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-secondary" type="submit">Delete paper</button></form>
 </div>
 {% set ns = namespace(n=0) %}
 {% for qtype in ['MCQ','Short','Long','Numerical'] %}
 {% set items = paper.questions | selectattr('qtype','equalto',qtype) | rejectattr('section') | list %}
-{% if items %}<div class="card"><h2>{{ {'MCQ':'MCQs','Short':'Short Questions','Long':'Long Questions','Numerical':'Numericals'}[qtype] }}{% if paper.attempts.get(qtype) %} — Attempt any {{ paper.attempts[qtype] }} out of {{ items|length }}{% endif %}</h2>
+{% if items %}<div class="card"><h2>{{ {'MCQ':'MCQs','Short':'Short Questions','Long':'Long Questions','Numerical':'Numericals'}[qtype] }}{% if paper.attempts.get(qtype) %} — Attempt any {{ paper.attempts[qtype] }} out of {{ items|length }}{% endif %} <span class="muted">({{ (items[:(paper.attempts.get(qtype) or items|length)] | sum(attribute='marks')) | marks }})</span></h2>
 {% for q in items %}{% set ns.n = ns.n + 1 %}
 {{ qbox(q, ns.n) }}
 {% endfor %}</div>{% endif %}{% endfor %}
 {% for sec in paper.sections %}
 {% set items = paper.questions | selectattr('section','equalto',sec.title) | list %}
-{% if items %}<div class="card"><h2>{{ sec.title }}{% if sec.attempt %} — Attempt any {{ sec.attempt }} out of {{ items|length }}{% endif %}</h2>
+{% if items %}<div class="card"><h2>{{ sec.title }}{% if sec.attempt %} — Attempt any {{ sec.attempt }} out of {{ items|length }}{% endif %} <span class="muted">({{ (items[:(sec.attempt or items|length)] | sum(attribute='marks')) | marks }})</span></h2>
 {% if sec.note %}<p class="muted">{{ sec.note }}</p>{% endif %}
 {% for q in items %}{% set ns.n = ns.n + 1 %}
 {{ qbox(q, ns.n) }}

@@ -350,6 +350,31 @@ def _paper_total(questions, attempts, sections):
     return total
 
 
+def _fmt_date(iso):
+    """'2026-11-26' -> '26 November 2026' (the date format on a Pakistani
+    exam paper). Passes the value through unchanged if it is not ISO."""
+    try:
+        return datetime.strptime(str(iso), "%Y-%m-%d").strftime("%d %B %Y")
+    except Exception:
+        return str(iso or "")
+
+
+def _marks_label(n):
+    """'1 mark' / '2 marks' — a paper must never say '[1 marks]'."""
+    return f"{n} mark" if n == 1 else f"{n} marks"
+
+
+@app.template_filter("pkdate")
+def _pkdate_filter(iso):
+    return _fmt_date(iso)
+
+
+@app.template_filter("marks")
+def _marks_filter(n):
+    return _marks_label(n)
+    return total
+
+
 def init_db():
     db.create_all()
     _ensure_columns()
@@ -1147,13 +1172,28 @@ def generator():
         paper_date = request.form.get("paper_date") or date.today().isoformat()
         variant = request.form.get("variant") or "A"
         allow_short = request.form.get("allow_short") == "1"
+        # Everything the teacher typed, so a failed generation re-shows the
+        # form exactly as it was instead of wiping it (class, subject,
+        # quantities, marks, chapters, sections). `preset` drives the JS
+        # restore of the class/subject/chapter selects.
+        today = date.today().isoformat()
+        preset = {"class": request.form.get("class_level_id") or "",
+                  "subject": request.form.get("subject_id") or "",
+                  "chapters": request.form.getlist("chapter_ids"),
+                  "scope": scope}
         if not (cid and sid):
             flash("Select a class and a subject.", "error")
-            return render_template("generator.html", classes=classes)
+            return render_template("generator.html", classes=classes,
+                                   formats=FORMATS, format_groups=FORMAT_GROUPS,
+                                   form_data=request.form, preset_sections=[],
+                                   preset=preset, today=today)
         ch_ids = _chapter_ids_for_scope(scope, sid, chapter_ids)
         if not ch_ids:
             flash("Select at least one chapter.", "error")
-            return render_template("generator.html", classes=classes)
+            return render_template("generator.html", classes=classes,
+                                   formats=FORMATS, format_groups=FORMAT_GROUPS,
+                                   form_data=request.form, preset_sections=[],
+                                   preset=preset, today=today)
         marks_per = {t: (request.form.get(f"marks_{t.lower()}", type=int)
                          or TYPE_MARKS_DEFAULT[t]) for t in QTYPES}
         selected, shortfalls = [], []
@@ -1301,9 +1341,11 @@ def generator():
                         used.add(qq.id)
         if shortfalls and not allow_short:
             # Do NOT silently make a short paper: show the warning and ask to confirm.
+            # The form comes back exactly as the teacher filled it, so they can
+            # tick "Generate anyway" without re-entering anything.
             return render_template("generator.html", classes=classes, formats=FORMATS, format_groups=FORMAT_GROUPS,
                                    shortfalls=shortfalls, form_data=request.form,
-                                   preset_sections=preset_sections)
+                                   preset_sections=preset_sections, preset=preset, today=today)
         # "Attempt any N out of M" choice, per question type (e.g. Short: any 5 of 8).
         attempts = {}
         for qtype in QTYPES:
@@ -1315,18 +1357,21 @@ def generator():
             if n > have:
                 flash(f"Attempt any {n} for {TYPE_LABEL[qtype]} is more than the {have} questions in that section — lower it or add more questions first.", "error")
                 return render_template("generator.html", classes=classes, formats=FORMATS, format_groups=FORMAT_GROUPS,
-                                       form_data=request.form, preset_sections=preset_sections)
+                                       form_data=request.form, preset_sections=preset_sections,
+                                       preset=preset, today=today)
         for sec in section_metas:
             have = sum(1 for q in selected if q.get("section") == sec["title"])
             if sec["attempt"] and sec["attempt"] > have:
                 flash(f"Section '{sec['title']}': attempt any {sec['attempt']} is more than the {have} questions in that section — lower it or add more questions first.", "error")
                 return render_template("generator.html", classes=classes, formats=FORMATS, format_groups=FORMAT_GROUPS,
-                                       form_data=request.form, preset_sections=preset_sections)
+                                       form_data=request.form, preset_sections=preset_sections,
+                                       preset=preset, today=today)
         total = _paper_total(selected, attempts, section_metas)
         if not selected:
             flash("No questions selected — set at least one quantity above 0.", "error")
             return render_template("generator.html", classes=classes, formats=FORMATS,
-                                       format_groups=FORMAT_GROUPS)
+                                   format_groups=FORMAT_GROUPS, form_data=request.form,
+                                   preset_sections=preset_sections, preset=preset, today=today)
         paper = Paper(title=title, teacher_id=current_user.id, class_level_id=cid,
                       subject_id=sid, variant=variant, total_marks=total,
                       duration_minutes=duration, instructions=instructions,
@@ -1342,7 +1387,9 @@ def generator():
             flash("Paper generated successfully.", "success")
         return redirect(url_for("paper_view", pid=paper.id))
     return render_template("generator.html", classes=classes, formats=FORMATS, format_groups=FORMAT_GROUPS,
-                           preset_sections=[])
+                           preset_sections=[], preset={"class": "", "subject": "",
+                                                      "chapters": [], "scope": "full"},
+                           today=date.today().isoformat())
 
 
 @app.route("/generator/variant/<int:pid>", methods=["POST"])
@@ -1451,6 +1498,17 @@ def _get_paper(pid):
 def paper_view(pid):
     p = _get_paper(pid)
     return render_template("paper_view.html", paper=p, academy_name=ACADEMY_NAME)
+
+
+@app.route("/papers/<int:pid>/delete", methods=["POST"])
+@login_required
+def delete_paper(pid):
+    p = _get_paper(pid)  # teachers can only delete their own papers
+    db.session.delete(p)
+    db.session.commit()
+    log_activity("paper_deleted", p.title)
+    flash(f"Paper '{p.title}' deleted.", "success")
+    return redirect(url_for("history"))
 
 
 @app.route("/papers/<int:pid>/edit", methods=["GET", "POST"])
@@ -1611,8 +1669,9 @@ def _paper_pdf(pid, answer_key=False):
     story.append(Spacer(1, 4 * mm))
     meta = [[f"Class: {p.class_level.name if p.class_level else ''}",
              f"Subject: {p.subject.name if p.subject else ''}"],
-            [f"Date: {p.paper_date or ''}", f"Time: {p.duration_minutes} minutes"],
-            [f"Paper: {p.variant}", f"Total Marks: {p.total_marks}"]]
+            [f"Date: {_fmt_date(p.paper_date)}", f"Time: {p.duration_minutes} minutes"],
+            [f"Paper: {p.variant}", f"Total Marks: {p.total_marks}"],
+            ["Name: ______________________", "Roll No: ______________"]]
     t = Table(meta, colWidths=[85 * mm, 85 * mm])
     t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.5, colors.black),
                            ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.grey),
@@ -1639,11 +1698,13 @@ def _paper_pdf(pid, answer_key=False):
         heading = f"Section: {TYPE_LABEL[qtype]}"
         if attempts.get(qtype):
             heading += f" — Attempt any {attempts[qtype]} out of {len(items)}"
+        sec_total = sum(q["marks"] for q in items[:(attempts.get(qtype) or len(items))])
+        heading += f" ({_marks_label(sec_total)})"
         story.append(Paragraph(heading, bold))
         story.append(Spacer(1, 2 * mm))
         for qq in items:
             n += 1
-            story.append(Paragraph(f"Q{n}. {qq['text']} &nbsp; <b>[{qq['marks']} marks]</b>", body))
+            story.append(Paragraph(f"Q{n}. {qq['text']} &nbsp; <b>[{_marks_label(qq['marks'])}]</b>", body))
             if qtype == "MCQ" and qq.get("options"):
                 for letter, opt in zip("ABCD", qq["options"]):
                     story.append(Paragraph(f"&nbsp;&nbsp;&nbsp;({letter}) {opt}", body))
@@ -1661,6 +1722,8 @@ def _paper_pdf(pid, answer_key=False):
         heading = f"Section: {sec['title']}"
         if sec.get("attempt"):
             heading += f" — Attempt any {sec['attempt']} out of {len(items)}"
+        sec_total = sum(q["marks"] for q in items[:(sec.get("attempt") or len(items))])
+        heading += f" ({_marks_label(sec_total)})"
         story.append(Paragraph(heading, bold))
         if sec.get("note"):
             story.append(Paragraph(f"<i>{sec['note']}</i>", body))
@@ -1670,7 +1733,7 @@ def _paper_pdf(pid, answer_key=False):
             if qq.get("parts"):
                 story.append(Paragraph(f"Q{n}.", body))
                 for letter, part in zip("ab", qq["parts"]):
-                    story.append(Paragraph(f"&nbsp;&nbsp;({letter}) {part['text']} &nbsp; <b>[{part['marks']} marks]</b>", body))
+                    story.append(Paragraph(f"&nbsp;&nbsp;({letter}) {part['text']} &nbsp; <b>[{_marks_label(part['marks'])}]</b>", body))
                     if part["qtype"] == "MCQ" and part.get("options"):
                         for l2, opt in zip("ABCD", part["options"]):
                             story.append(Paragraph(f"&nbsp;&nbsp;&nbsp;&nbsp;({l2}) {opt}", body))
@@ -1680,7 +1743,7 @@ def _paper_pdf(pid, answer_key=False):
                         story.append(Paragraph(f"&nbsp;&nbsp;&nbsp;&nbsp;<b>Answer:</b> {part['answer']}", body))
                 story.append(Spacer(1, 2 * mm))
                 continue
-            story.append(Paragraph(f"Q{n}. {qq['text']} &nbsp; <b>[{qq['marks']} marks]</b>", body))
+            story.append(Paragraph(f"Q{n}. {qq['text']} &nbsp; <b>[{_marks_label(qq['marks'])}]</b>", body))
             if qq["qtype"] == "MCQ" and qq.get("options"):
                 for letter, opt in zip("ABCD", qq["options"]):
                     story.append(Paragraph(f"&nbsp;&nbsp;&nbsp;({letter}) {opt}", body))
@@ -1690,9 +1753,6 @@ def _paper_pdf(pid, answer_key=False):
                 story.append(Paragraph(f"&nbsp;&nbsp;&nbsp;<b>Answer:</b> {qq['answer']}", body))
             story.append(Spacer(1, 2 * mm))
         story.append(Spacer(1, 2 * mm))
-    if not answer_key:
-        story.append(Spacer(1, 6 * mm))
-        story.append(Paragraph("Name: ______________________ &nbsp;&nbsp; Roll No: __________", body))
 
     def footer(canvas, doc_):
         canvas.saveState()
