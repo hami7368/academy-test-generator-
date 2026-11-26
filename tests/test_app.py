@@ -436,6 +436,7 @@ def test_english_paper_has_no_long_or_numerical():
     login(c, "teacher@test.com", "TeachPass123")
     g = c.get("/generator")
     assert g.status_code == 200 and 'data-qtype="Long"' in g.data.decode()
+    assert 'sec-writing-hint' in g.data.decode()
     with appmod.app.app_context():
         cl = appmod.ClassLevel.query.filter_by(name="Class 9th").first()
         subj = appmod.Subject.query.filter_by(name="English", class_level_id=cl.id).first()

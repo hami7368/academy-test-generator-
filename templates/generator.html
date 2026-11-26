@@ -130,6 +130,10 @@ function syncSection(block){
   const parts = block.querySelector('.sec-parts').checked;
   if(parts) block.querySelector('.sec-qtype').value = 'Long';
   const noCh = NO_CHAPTER.has(fmt);
+  const hint = block.querySelector('.sec-writing-hint');
+  if(hint) hint.textContent = noCh
+    ? 'These have no Theory / Exercise — questions are picked from the whole book.'
+    : 'These have no Theory / Exercise — questions are picked from the whole book (or the chapters ticked below).';
   block.querySelector('.sec-single').hidden = !(writing || parts);
   block.querySelector('.sec-split').hidden = writing || parts;
   block.querySelector('.sec-parts-box').hidden = !parts;
@@ -220,7 +224,7 @@ function addSection(p){
     + '<div class="row"><div class="sec-type-wrap"><label>Question type</label><select class="sec-qtype" name="sec_qtype_'+i+'">'+typeOpts+'</select></div>'
     + '<div class="sec-marks-wrap"><label>Marks per question</label><input type="number" class="sec-marks" name="sec_marks_'+i+'" value="'+(p.marks||5)+'" min="1" style="width:80px"></div></div>'
     + '<div class="sec-single"><label>How many? <input type="number" class="sec-qty-single" name="sec_qty_'+i+'" value="'+(p.qty||0)+'" min="0"> questions</label>'
-    + '<p class="muted">Essay / Tashreeh / Translation have no Theory / Exercise — questions are picked from the whole book (or the chapters ticked below).</p></div>'
+    + '<p class="muted sec-writing-hint">These have no Theory / Exercise — questions are picked from the whole book (or the chapters ticked below).</p></div>'
     + '<div class="sec-split"><label>Theory: <input type="number" class="sec-qty" name="sec_theory_'+i+'" value="'+(p.theory||0)+'" min="0"> questions</label>'
     + '<label>Exercise: <input type="number" class="sec-qty" name="sec_exercise_'+i+'" value="'+(p.exercise||0)+'" min="0"> questions</label></div>'
     + '<label class="sec-parts-row"><input type="checkbox" class="sec-parts" name="sec_parts_'+i+'" value="1"'+(p.parts?' checked':'')+'> Split each Long question into part (a) and part (b)</label>'
