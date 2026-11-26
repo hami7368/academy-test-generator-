@@ -693,6 +693,121 @@ def test_dashboard_greeting_not_duplicated():
     assert b"(Owner / Admin)" not in r.data
 
 
+def test_api_counts():
+    c = make_client()
+    login(c, "teacher@test.com", "TeachPass123")
+    with appmod.app.app_context():
+        cl = appmod.ClassLevel.query.filter_by(name="Class 9th").first()
+        subj = appmod.Subject.query.filter_by(name="English", class_level_id=cl.id).first()
+        ch1 = appmod.Chapter.query.filter_by(subject_id=subj.id, number=1).first()
+    r = c.get(f"/api/counts/{subj.id}")
+    d = r.get_json()
+    assert d["by_type"]["MCQ"] == {"Theory": 2, "Exercise": 1}
+    assert d["by_type"]["Short"]["Theory"] == 3
+    assert d["by_format"] == {"General": 7}
+    r = c.get(f"/api/counts/{subj.id}?chapters={ch1.id}")
+    d = r.get_json()
+    assert d["by_type"]["MCQ"] == {"Theory": 1}
+    assert d["by_type"]["Short"] == {"Theory": 1}
+
+
+def test_generator_shortfall_shows_anyway_totals():
+    """The 'generate anyway' warning now says the exact shortfall in marks
+    (6 of 16 marks, 4 of 5 questions) instead of just 'shorter'."""
+    c = make_client()
+    login(c, "teacher@test.com", "TeachPass123")
+    with appmod.app.app_context():
+        cl = appmod.ClassLevel.query.filter_by(name="Class 9th").first()
+        subj = appmod.Subject.query.filter_by(name="English", class_level_id=cl.id).first()
+    data = _gen_data(cl.id, subj.id, mcq_theory=2, short_theory=2,
+                     sec_title_0="Essay", sec_qtype_0="Long", sec_format_0="Essay",
+                     sec_qty_0=1, sec_marks_0=10)
+    r = c.post("/generator", data=data)
+    assert r.status_code == 200
+    assert b"If you generate anyway" in r.data
+    assert b"6 of 16 marks" in r.data
+    assert b"4 of 5 questions" in r.data
+
+
+def test_questions_bank_counts_search_pagination():
+    c = make_client()
+    login(c, "teacher@test.com", "TeachPass123")
+    with appmod.app.app_context():
+        cl = appmod.ClassLevel.query.filter_by(name="Class 9th").first()
+        subj = appmod.Subject.query.filter_by(name="English", class_level_id=cl.id).first()
+    r = c.get(f"/questions?class_level_id={cl.id}&subject_id={subj.id}")
+    assert r.status_code == 200
+    # Bank at a glance + the format breakdown, including the zero.
+    assert "Class 9th · English — 7".encode() in r.data
+    assert b"Essay 0" in r.data
+    assert b"General 7" in r.data
+    # Search narrows to matching text only.
+    r = c.get("/questions?q=patriotism")
+    assert b"Define patriotism." in r.data
+    assert b"The Holy Prophet" not in r.data
+    # Pagination: page 2 shows 51-100 of 194.
+    r = c.get("/questions?page=2")
+    assert b"51" in r.data and b"of 194" in r.data
+    # Class 9th comes first, not Class 12th.
+    r = c.get("/questions")
+    assert r.data.index(b"Class 9th") < r.data.index(b"Class 12th")
+
+
+def test_questions_answers_hidden_by_default():
+    c = make_client()
+    login(c, "teacher@test.com", "TeachPass123")
+    r = c.get("/questions")
+    assert b"Show answers" in r.data
+    assert b'style="display:none"' in r.data
+    assert b"Answer:" in r.data  # present in the page, just hidden
+
+
+def test_history_subject_and_teacher_filters():
+    c = make_client()
+    login(c, "admin@test.com", "AdminPass123")
+    with appmod.app.app_context():
+        cl = appmod.ClassLevel.query.filter_by(name="Class 9th").first()
+        phys = appmod.Subject.query.filter_by(name="Physics", class_level_id=cl.id).first()
+        engl = appmod.Subject.query.filter_by(name="English", class_level_id=cl.id).first()
+        teacher = appmod.User.query.filter_by(email="teacher@test.com").first()
+    c.post("/generator", data=_gen_data(cl.id, phys.id, title="Physics Paper", mcq_theory=2))
+    c.get("/logout", follow_redirects=True)
+    login(c, "teacher@test.com", "TeachPass123")
+    c.post("/generator", data=_gen_data(cl.id, engl.id, title="English Paper", mcq_theory=2))
+    c.get("/logout", follow_redirects=True)
+    login(c, "admin@test.com", "AdminPass123")
+    r = c.get(f"/history?subject_id={phys.id}")
+    assert b"Physics Paper" in r.data and b"English Paper" not in r.data
+    r = c.get(f"/history?teacher_id={teacher.id}")
+    assert b"English Paper" in r.data and b"Physics Paper" not in r.data
+
+
+def test_settings_academy_name():
+    c = make_client()
+    login(c, "admin@test.com", "AdminPass123")
+    r = c.post("/admin/settings", data={"academy_name": "Sunrise Academy"},
+               follow_redirects=True)
+    assert r.status_code == 200
+    assert b"Academy name saved" in r.data
+    assert b"Sunrise Academy" in c.get("/admin/settings").data
+    # The saved name appears on a paper preview.
+    with appmod.app.app_context():
+        cl = appmod.ClassLevel.query.filter_by(name="Class 9th").first()
+        subj = appmod.Subject.query.filter_by(name="Physics", class_level_id=cl.id).first()
+    c.post("/generator", data=_gen_data(cl.id, subj.id, mcq_theory=2),
+           follow_redirects=True)
+    with appmod.app.app_context():
+        pid = appmod.Paper.query.filter_by(title="Phase 1 Test Paper").first().id
+    assert b"Sunrise Academy" in c.get(f"/papers/{pid}").data
+    # Empty goes back to the server default.
+    c.post("/admin/settings", data={"academy_name": ""}, follow_redirects=True)
+    assert b"My Academy" in c.get("/admin/settings").data
+    # Teachers cannot change settings.
+    c.get("/logout", follow_redirects=True)
+    login(c, "teacher@test.com", "TeachPass123")
+    assert c.post("/admin/settings", data={"academy_name": "Hack"}).status_code == 403
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

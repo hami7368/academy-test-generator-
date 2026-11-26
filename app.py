@@ -225,6 +225,24 @@ class Paper(db.Model):
         return qs
 
 
+class Setting(db.Model):
+    """One-row-per-key settings the admin can change in the app
+    (e.g. the academy name printed on papers)."""
+    key = db.Column(db.String(50), primary_key=True)
+    value = db.Column(db.Text, default="")
+
+
+def get_setting(key, default=""):
+    row = db.session.get(Setting, key)
+    return row.value if row and row.value else default
+
+
+def get_academy_name():
+    """The name printed on papers: the admin's saved name, or the
+    ACADEMY_NAME environment variable when nothing is saved."""
+    return get_setting("academy_name") or ACADEMY_NAME
+
+
 class ActivityLog(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"))
@@ -619,13 +637,23 @@ def admin_activity():
     return render_template("activity.html", logs=logs)
 
 
-@app.route("/admin/settings")
+@app.route("/admin/settings", methods=["GET", "POST"])
 @login_required
 @admin_required
 def admin_settings():
     ai_configured = bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("OPENAI_API_KEY"))
-    return render_template("settings.html", academy_name=ACADEMY_NAME,
-                           ai_configured=ai_configured)
+    if request.method == "POST":
+        name = (request.form.get("academy_name") or "").strip()[:100]
+        row = db.session.get(Setting, "academy_name")
+        if row is None:
+            db.session.add(Setting(key="academy_name", value=name))
+        else:
+            row.value = name
+        db.session.commit()
+        flash("Academy name saved — it now appears on every paper.", "success")
+        return redirect(url_for("admin_settings"))
+    return render_template("settings.html", academy_name=get_academy_name(),
+                           env_name=ACADEMY_NAME, ai_configured=ai_configured)
 
 
 # ---------------- Admin: classes / subjects / chapters ----------------
@@ -738,6 +766,8 @@ def admin_book_delete(bid):
 @app.route("/questions")
 @login_required
 def list_questions():
+    from sqlalchemy import func
+    from urllib.parse import urlencode
     q = Question.query
     cid = request.args.get("class_level_id", type=int)
     sid = request.args.get("subject_id", type=int)
@@ -745,19 +775,69 @@ def list_questions():
     qt = request.args.get("qtype")
     src = request.args.get("source")
     fmt = request.args.get("format")
+    qtext = request.args.get("q", "").strip()
     if cid: q = q.filter_by(class_level_id=cid)
     if sid: q = q.filter_by(subject_id=sid)
     if chid: q = q.filter_by(chapter_id=chid)
     if qt in QTYPES: q = q.filter_by(qtype=qt)
     if src in SOURCES: q = q.filter_by(source=src)
     if fmt in FORMATS: q = q.filter_by(format=fmt)
-    questions = q.order_by(Question.created_at.desc()).limit(300).all()
+    if qtext: q = q.filter(Question.text.ilike(f"%{qtext}%"))
+    # Class 9th first, then by subject and chapter — not newest first.
+    q = (q.join(ClassLevel, Question.class_level_id == ClassLevel.id)
+          .join(Subject, Question.subject_id == Subject.id)
+          .join(Chapter, Question.chapter_id == Chapter.id)
+          .order_by(ClassLevel.sort_order, Subject.name, Chapter.number, Question.id))
+    total = q.count()
+    page = max(1, request.args.get("page", 1, type=int) or 1)
+    per_page = 50
+    questions = q.offset((page - 1) * per_page).limit(per_page).all()
     classes = ClassLevel.query.order_by(ClassLevel.sort_order).all()
     subjects = Subject.query.all()
     chapters = Chapter.query.all()
+    # Bank at a glance: how many questions each class/subject holds, by type
+    # and by format — so a teacher can see at once that e.g. Class 9th
+    # English has 0 Essay questions before trying to generate with one.
+    bank_counts = []
+    grouped = {}
+    for cid_, sid_, qt_, fmt_, n in (
+            db.session.query(Question.class_level_id, Question.subject_id,
+                             Question.qtype, Question.format, func.count())
+            .group_by(Question.class_level_id, Question.subject_id,
+                      Question.qtype, Question.format).all()):
+        e = grouped.setdefault((cid_, sid_), {"total": 0, "types": {}, "formats": {}})
+        e["total"] += n
+        e["types"][qt_] = e["types"].get(qt_, 0) + n
+        e["formats"][fmt_ or "General"] = e["formats"].get(fmt_ or "General", 0) + n
+    for (cid_, sid_), e in sorted(grouped.items()):
+        cl_ = next((c for c in classes if c.id == cid_), None)
+        sj_ = next((s for s in subjects if s.id == sid_), None)
+        if cl_ and sj_:
+            bank_counts.append({"cid": cid_, "sid": sid_, "class": cl_.name,
+                                "subject": sj_.name, **e})
+    # When one subject is filtered, show its format breakdown too — including
+    # the zeros (e.g. "Essay 0"), so a teacher sees before generating that
+    # the bank has no Essay questions for it.
+    fmt_breakdown = None
+    if sid:
+        sj_ = next((s for s in subjects if s.id == sid), None)
+        if sj_:
+            e = grouped.get((sj_.class_level_id, sid), {"formats": {}})
+            fmt_breakdown = {"class": sj_.class_level.name, "subject": sj_.name,
+                             "items": [(f, e["formats"].get(f, 0))
+                                       for f in formats_for_subject(sj_.name)]}
+    qs = urlencode([(k, v) for k, v in request.args.items() if k != "page" and v])
     return render_template("questions.html", questions=questions, classes=classes,
                            subjects=subjects, chapters=chapters, formats=FORMATS,
-                           sel=dict(cid=cid, sid=sid, chid=chid, qt=qt, src=src, fmt=fmt))
+                           format_groups=FORMAT_GROUPS,
+                           subjects_json=[{"id": s.id, "name": s.name,
+                                           "cid": s.class_level_id,
+                                           "class": s.class_level.name} for s in subjects],
+                           bank_counts=bank_counts, fmt_breakdown=fmt_breakdown,
+                           total=total, page=page,
+                           per_page=per_page, qs=qs,
+                           sel=dict(cid=cid, sid=sid, chid=chid, qt=qt, src=src,
+                                    fmt=fmt, q=qtext))
 
 
 @app.route("/questions/new", methods=["GET", "POST"])
@@ -1092,6 +1172,27 @@ def api_bank(sid):
     return jsonify([{"id": r.id, "text": r.text} for r in rows])
 
 
+@app.route("/api/counts/<int:sid>")
+@login_required
+def api_counts(sid):
+    """How many questions the bank holds for a subject, by type/source and
+    by format — so the generator can show 'Available: N' before the teacher
+    submits. Optional ?chapters=1,2,3 narrows it to those chapters."""
+    from sqlalchemy import func
+    ch = [int(x) for x in request.args.getlist("chapters") if str(x).isdigit()]
+    base = (db.session.query(Question.qtype, Question.source, Question.format,
+                             func.count())
+            .filter_by(subject_id=sid))
+    if ch:
+        base = base.filter(Question.chapter_id.in_(ch))
+    by_type, by_format = {}, {}
+    for qt, src, fmt, n in base.group_by(Question.qtype, Question.source,
+                                         Question.format).all():
+        by_type.setdefault(qt, {})[src] = by_type.get(qt, {}).get(src, 0) + n
+        by_format[fmt or "General"] = by_format.get(fmt or "General", 0) + n
+    return jsonify({"by_type": by_type, "by_format": by_format})
+
+
 # ---------------- Paper generator ----------------
 TYPE_MARKS_DEFAULT = {"MCQ": 1, "Short": 2, "Long": 5, "Numerical": 4}
 TYPE_LABEL = {"MCQ": "MCQs", "Short": "Short Questions", "Long": "Long Questions",
@@ -1339,13 +1440,40 @@ def generator():
                     for qq in picked:
                         selected.append(_snapshot_question(qq, marks, section=sec_title))
                         used.add(qq.id)
+        # What the teacher asked for vs what is actually there, so the
+        # "generate anyway" warning can say the exact shortfall in marks
+        # instead of just "the paper will be shorter".
+        requested_count, requested_total = 0, 0
+        for qtype, f_th, f_ex in QTY_FIELDS:
+            if subj_is_lang and qtype in ("Long", "Numerical"):
+                continue
+            n = (request.form.get(f_th, type=int) or 0) + (request.form.get(f_ex, type=int) or 0)
+            requested_count += n
+            requested_total += n * marks_per[qtype]
+        for meta in section_metas:
+            if meta.get("parts"):
+                n_long = meta["qty"] or (meta["theory"] + meta["exercise"])
+                pm = meta["parts"]["a"]["marks"] + meta["parts"]["b"]["marks"]
+                requested_count += n_long
+                requested_total += n_long * pm
+            elif meta["format"] in WRITING_FORMATS:
+                requested_count += meta["qty"]
+                requested_total += meta["qty"] * meta["marks"]
+            else:
+                n = meta["theory"] + meta["exercise"]
+                requested_count += n
+                requested_total += n * meta["marks"]
+        anyway_count = len(selected)
+        anyway_total = _paper_total(selected, {}, section_metas)
         if shortfalls and not allow_short:
             # Do NOT silently make a short paper: show the warning and ask to confirm.
             # The form comes back exactly as the teacher filled it, so they can
             # tick "Generate anyway" without re-entering anything.
             return render_template("generator.html", classes=classes, formats=FORMATS, format_groups=FORMAT_GROUPS,
                                    shortfalls=shortfalls, form_data=request.form,
-                                   preset_sections=preset_sections, preset=preset, today=today)
+                                   preset_sections=preset_sections, preset=preset, today=today,
+                                   requested_count=requested_count, requested_total=requested_total,
+                                   anyway_count=anyway_count, anyway_total=anyway_total)
         # "Attempt any N out of M" choice, per question type (e.g. Short: any 5 of 8).
         attempts = {}
         for qtype in QTYPES:
@@ -1497,7 +1625,7 @@ def _get_paper(pid):
 @login_required
 def paper_view(pid):
     p = _get_paper(pid)
-    return render_template("paper_view.html", paper=p, academy_name=ACADEMY_NAME)
+    return render_template("paper_view.html", paper=p, academy_name=get_academy_name())
 
 
 @app.route("/papers/<int:pid>/delete", methods=["POST"])
@@ -1609,6 +1737,7 @@ def history():
     title = request.args.get("q", "").strip()
     cid = request.args.get("class_level_id", type=int)
     sid = request.args.get("subject_id", type=int)
+    tid = request.args.get("teacher_id", type=int)
     d = request.args.get("date", "").strip()
     if title:
         q = q.filter(Paper.title.ilike(f"%{title}%"))
@@ -1616,12 +1745,17 @@ def history():
         q = q.filter_by(class_level_id=cid)
     if sid:
         q = q.filter_by(subject_id=sid)
+    if tid and current_user.is_admin:
+        q = q.filter_by(teacher_id=tid)
     if d:
         q = q.filter_by(paper_date=d)
     papers = q.order_by(Paper.created_at.desc()).all()
     classes = ClassLevel.query.order_by(ClassLevel.sort_order).all()
+    subjects = Subject.query.order_by(Subject.class_level_id, Subject.name).all()
+    teachers = User.query.filter_by(role="teacher").order_by(User.name).all()
     return render_template("history.html", papers=papers, classes=classes,
-                           sel=dict(q=title, cid=cid, sid=sid, d=d))
+                           subjects=subjects, teachers=teachers,
+                           sel=dict(q=title, cid=cid, sid=sid, tid=tid, d=d))
 
 
 # ---------------- PDF export ----------------
@@ -1664,7 +1798,7 @@ def _paper_pdf(pid, answer_key=False):
     body = ParagraphStyle("body", fontName="Helvetica", fontSize=11, leading=15)
     bold = ParagraphStyle("bold", fontName="Helvetica-Bold", fontSize=12, leading=16)
     story = []
-    story.append(Paragraph(ACADEMY_NAME, h))
+    story.append(Paragraph(get_academy_name(), h))
     story.append(Paragraph("Test Paper" + (" — Answer Key" if answer_key else ""), sub))
     story.append(Spacer(1, 4 * mm))
     meta = [[f"Class: {p.class_level.name if p.class_level else ''}",
@@ -1757,7 +1891,7 @@ def _paper_pdf(pid, answer_key=False):
     def footer(canvas, doc_):
         canvas.saveState()
         canvas.setFont("Helvetica", 9)
-        canvas.drawCentredString(A4[0] / 2, 12 * mm, f"Page {doc_.page}  |  {ACADEMY_NAME}")
+        canvas.drawCentredString(A4[0] / 2, 12 * mm, f"Page {doc_.page}  |  {get_academy_name()}")
         canvas.restoreState()
 
     doc.build(story, onFirstPage=footer, onLaterPages=footer)

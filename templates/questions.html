@@ -1,17 +1,61 @@
 {% extends "base.html" %}{% block content %}
 <h1>Question Bank</h1>
 {% if current_user.is_admin %}<p><a class="btn" href="/questions/new">+ Add Question</a> <a class="btn btn-secondary" href="/admin/questions/import">⬆ Import from Excel</a></p>{% endif %}
+<div class="card"><h2>Bank at a glance</h2>
+<p class="muted">How many questions each class and subject holds — click one to see its questions.</p>
+<p>{% for b in bank_counts %}<a class="btn btn-light" href="/questions?class_level_id={{ b.cid }}&subject_id={{ b.sid }}">{{ b.class }} · {{ b.subject }} — {{ b.total }} ({% for t, n in b.types.items() %}{{ t }} {{ n }}{% if not loop.last %}, {% endif %}{% endfor %})</a> {% endfor %}</p>
+{% if fmt_breakdown %}
+<p><b>{{ fmt_breakdown.class }} · {{ fmt_breakdown.subject }} formats:</b> {% for f, n in fmt_breakdown['items'] %}{{ f }} {{ n }}{% if not loop.last %}, {% endif %}{% endfor %}</p>
+{% endif %}</div>
 <div class="card"><form method="get" class="row">
-<div><label>Class</label><select name="class_level_id"><option value="">All</option>{% for c in classes %}<option value="{{ c.id }}" {{ 'selected' if sel.cid==c.id }}>{{ c.name }}</option>{% endfor %}</select></div>
+<div><label>Class</label><select name="class_level_id" id="bank-class"><option value="">All</option>{% for c in classes %}<option value="{{ c.id }}" {{ 'selected' if sel.cid==c.id }}>{{ c.name }}</option>{% endfor %}</select></div>
+<div><label>Subject</label><select name="subject_id" id="bank-subj"><option value="">All</option>{% for s in subjects %}<option value="{{ s.id }}" {{ 'selected' if sel.sid==s.id }}>{{ s.class_level.name }} · {{ s.name }}</option>{% endfor %}</select></div>
 <div><label>Type</label><select name="qtype"><option value="">All</option>{% for t in ['MCQ','Short','Long','Numerical'] %}<option {{ 'selected' if sel.qt==t }}>{{ t }}</option>{% endfor %}</select></div>
 <div><label>Source</label><select name="source"><option value="">All</option>{% for s in ['Theory','Exercise'] %}<option {{ 'selected' if sel.src==s }}>{{ s }}</option>{% endfor %}</select></div>
-<div><label>Format</label><select name="format"><option value="">All</option>{% for f in formats %}<option {{ 'selected' if sel.fmt==f }}>{{ f }}</option>{% endfor %}</select></div>
+<div><label>Format</label><select name="format" id="bank-format"><option value="">All</option>{% for f in formats %}<option {{ 'selected' if sel.fmt==f }}>{{ f }}</option>{% endfor %}</select></div>
+<div><label>Search</label><input name="q" value="{{ sel.q }}" placeholder="Search question text"></div>
 <div><label>&nbsp;</label><button type="submit">Filter</button></div></form></div>
-<div class="card"><table><tr><th>Question</th><th>Class / Subject / Chapter</th><th>Type</th><th>Format</th><th>Source</th><th>Level</th><th>Marks</th>{% if current_user.is_admin %}<th>Actions</th>{% endif %}</tr>
-{% for q in questions %}<tr><td>{{ q.text }}{% if q.qtype=='MCQ' %}<br><span class="muted">{% for o in q.options %}{{ 'ABCD'[loop.index0] }}) {{ o }} &nbsp;{% endfor %}<b>Answer: {{ q.correct_option }}</b></span>{% elif q.answer %}<br><span class="muted">Answer: {{ q.answer }}</span>{% endif %}</td>
+<div class="card">
+<p><label><input type="checkbox" id="show-answers"> Show answers</label> <span class="muted">Answers are hidden by default so the bank can be shown on a screen in class.</span></p>
+<table><tr><th>Question</th><th>Class / Subject / Chapter</th><th>Type</th><th>Format</th><th>Source</th><th>Level</th><th>Marks</th>{% if current_user.is_admin %}<th>Actions</th>{% endif %}</tr>
+{% for q in questions %}<tr><td>{{ q.text }}{% if q.qtype=='MCQ' %}<br><span class="muted">{% for o in q.options %}{{ 'ABCD'[loop.index0] }}) {{ o }} &nbsp;{% endfor %}<span class="ans" style="display:none"><b>Answer: {{ q.correct_option }}</b></span></span>{% elif q.answer %}<br><span class="muted ans" style="display:none">Answer: {{ q.answer }}</span>{% endif %}</td>
 <td>{{ q.class_level.name }} · {{ q.subject.name }} · {{ q.chapter.name }}</td><td>{{ q.qtype }}</td><td>{{ q.format or 'General' }}</td><td>{{ q.source }}</td><td>{{ q.difficulty }}</td><td>{{ q.marks }}</td>
 {% if current_user.is_admin %}<td><a href="/questions/{{ q.id }}/edit">Edit</a>
 <form method="post" action="/questions/{{ q.id }}/delete" style="display:inline" onsubmit="return confirm('Delete this question?')"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-danger" style="padding:.2rem .5rem">Delete</button></form></td>{% endif %}</tr>
 {% else %}<tr><td colspan="8">No questions match.</td></tr>{% endfor %}</table>
-<p class="muted">Showing up to 300 questions — use the filters above.</p></div>
+<p class="muted">Showing {{ (page-1)*per_page + 1 if total else 0 }}–{{ [page*per_page, total]|min }} of {{ total }} questions.</p>
+<p>{% if page > 1 %}<a class="btn btn-light" href="/questions?{{ qs }}&page={{ page-1 }}">← Previous</a>{% endif %}{% if page*per_page < total %}<a class="btn btn-light" href="/questions?{{ qs }}&page={{ page+1 }}">Next →</a>{% endif %}</p>
+</div>
+<script>
+document.getElementById('show-answers').addEventListener('change', e=>{
+  document.querySelectorAll('.ans').forEach(s=>{ s.style.display = e.target.checked ? '' : 'none'; });
+});
+const SUBJ = {{ subjects_json|tojson }};
+const FG = {{ format_groups|tojson }};
+const ALLFMT = {{ formats|tojson }};
+const clsSel = document.getElementById('bank-class');
+const subjSel = document.getElementById('bank-subj');
+const fmtSel = document.getElementById('bank-format');
+function fillSubjects(){
+  const cid = clsSel.value, cur = subjSel.value;
+  subjSel.innerHTML = '<option value="">All</option>';
+  SUBJ.filter(s=>!cid || String(s.cid)===cid).forEach(s=>{
+    const o=document.createElement('option'); o.value=s.id;
+    o.textContent = cid ? s.name : (s.class + ' · ' + s.name);
+    if(String(s.id)===cur) o.selected=true; subjSel.appendChild(o); });
+  fillFormats();
+}
+function fillFormats(){
+  const sel = subjSel.selectedOptions[0];
+  const name = sel ? sel.textContent.toLowerCase() : '';
+  let opts = ALLFMT.slice();
+  if(name.includes('english')) opts = ['General'].concat(FG.English||[]);
+  else if(name.includes('urdu')) opts = ['General'].concat(FG.Urdu||[]);
+  const cur = fmtSel.value;
+  fmtSel.innerHTML = '<option value="">All</option>' + opts.map(f=>'<option'+(f===cur?' selected':'')+'>'+f+'</option>').join('');
+}
+clsSel.addEventListener('change', fillSubjects);
+subjSel.addEventListener('change', fillFormats);
+fillSubjects();
+</script>
 {% endblock %}

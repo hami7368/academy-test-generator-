@@ -4,11 +4,11 @@
 <div class="card" style="border-color:#f59e0b;background:#fffbeb">
 <h2>⚠️ Not enough questions in the bank</h2>
 <ul>{% for s in shortfalls %}<li>{{ s }}</li>{% endfor %}</ul>
-<p>Tick the box below and submit again to generate with the questions that <b>are</b> available, or go to the Question Bank and add more questions first.</p>
+<p><b>If you generate anyway:</b> the paper will have {{ anyway_count }} of {{ requested_count }} questions and {{ anyway_total }} of {{ requested_total }} marks — the missing questions above will simply not be in the paper. Add them to the Question Bank first if you need the full paper.</p>
 </div>{% endif %}
 <div class="card"><form method="post" id="genform">
 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-{% if shortfalls %}<label><input type="checkbox" name="allow_short" value="1"> Generate anyway with the available questions (I understand the paper will be shorter than asked)</label>{% endif %}
+{% if shortfalls %}<label><input type="checkbox" name="allow_short" value="1"> Generate anyway — {{ anyway_total }} of {{ requested_total }} marks, {{ anyway_count }} of {{ requested_count }} questions</label>{% endif %}
 <div class="row">
 <div><label>Paper title</label><input name="title" value="{{ (form_data.title if form_data else 'Test Paper') }}" required></div>
 <div><label>Paper date</label><input type="date" name="paper_date" value="{{ (form_data.paper_date if form_data else today) }}"></div>
@@ -27,15 +27,18 @@
 <option value="one"{{ ' selected' if (form_data.scope if form_data else 'full') == 'one' }}>One chapter</option>
 <option value="multiple"{{ ' selected' if (form_data.scope if form_data else 'full') == 'multiple' }}>Multiple / custom chapters</option>
 </select>
-<div id="chapbox" style="display:none"><label>Choose chapter(s)</label><div id="chapters"></div></div>
+<p class="muted" id="scope-hint">Full book uses all chapters — no ticking needed.</p>
+<div id="chapbox" style="display:none"><label>Choose chapter(s)</label>
+<p><button type="button" class="btn btn-light" onclick="tickChapters(true)">Select all</button> <button type="button" class="btn btn-light" onclick="tickChapters(false)">Clear</button> <span class="muted">Tick at least one chapter — unticked boxes are not used.</span></p>
+<div id="chapters"></div></div>
 <h2>Quantities — Theory and Exercise are separate</h2>
-<p class="muted">For each type, say how many questions from <b>Theory</b> and how many from <b>Exercise</b>. Marks per question are set below each type.</p>
+<p class="muted">For each type, say how many questions from <b>Theory</b> and how many from <b>Exercise</b>. Marks per question are set below each type. Board papers usually use MCQ 1 mark, Short 2, Long 5, Numerical 4 and Essay 10 — change any of these if your paper needs different marks. The green "Available" number is how many questions the bank actually holds for that type.</p>
 <div class="qty-grid">
 {% for t, th, ex, m in [('MCQ','mcq_theory','mcq_exercise',1),('Short','short_theory','short_exercise',2),('Long','long_theory','long_exercise',5),('Numerical','num_theory','num_exercise',4)] %}
-<div class="card" data-qtype="{{ t }}"><h3>{{ t }}</h3>
-<label>Theory: <input type="number" class="qty" data-marks="{{ m }}" name="{{ th }}" value="{{ (form_data[th] if form_data and th in form_data else 0) }}" min="0"> questions</label>
-<label>Exercise: <input type="number" class="qty" data-marks="{{ m }}" name="{{ ex }}" value="{{ (form_data[ex] if form_data and ex in form_data else 0) }}" min="0"> questions</label>
-<label>Attempt any: <input type="number" class="attempt" data-type="{{ t }}" name="attempt_{{ t|lower }}" value="{{ (form_data['attempt_' + t|lower] if form_data else '') }}" min="0" placeholder="all" style="width:80px"> out of the above (blank = attempt all)</label>
+<div class="card" data-qtype="{{ t }}"><h3>{{ t }} <span class="muted card-total" data-card-total="{{ t }}"></span></h3>
+<label>Theory: <input type="number" class="qty" data-marks="{{ m }}" name="{{ th }}" value="{{ (form_data[th] if form_data and th in form_data else 0) }}" min="0"> questions <span class="avail" data-avail="{{ th }}"></span></label>
+<label>Exercise: <input type="number" class="qty" data-marks="{{ m }}" name="{{ ex }}" value="{{ (form_data[ex] if form_data and ex in form_data else 0) }}" min="0"> questions <span class="avail" data-avail="{{ ex }}"></span></label>
+<label>Attempt any: <input type="number" class="attempt" data-type="{{ t }}" name="attempt_{{ t|lower }}" value="{{ (form_data['attempt_' + t|lower] if form_data else '') }}" min="0" placeholder="e.g. 5" style="width:80px"> out of the above (blank = attempt all)</label>
 <label>Marks per {{ t }}: <input type="number" class="mpq" data-type="{{ t }}" name="marks_{{ t|lower }}" value="{{ (form_data['marks_' + t|lower] if form_data else m) }}" min="1" style="width:80px"></label>
 </div>{% endfor %}
 </div>
@@ -43,9 +46,8 @@
 <p class="muted">Need an Essay, Tashreeh, Translation or any other part? Click <b>+ Add Section</b>, choose what to add, and set its chapters, marks and choice. Essay / Tashreeh / Translation have no Theory / Exercise — just say how many. Each section can cover different chapters, so you can have two Short sections from different chapters. Add as many sections as you like — there is no limit. A Long section can also be split into <b>part (a) and part (b)</b> (e.g. (a) a Short question and (b) a Numerical), each part with its own chapters — leave all chapter boxes ticked and the app picks from any chapter itself.</p>
 <div id="sections"></div>
 <p><button type="button" class="btn btn-secondary" onclick="addSection()">+ Add Section</button></p>
-<p><b>Total marks: <span id="total">0</span></b> (calculated live; also checked on the server)</p>
 <label>Instructions for students</label><textarea name="instructions">{{ (form_data.instructions if form_data else 'Attempt all questions. Write your name and roll number clearly. No extra sheet will be provided.') }}</textarea>
-<button type="submit">Generate Paper</button></form></div>
+<div class="sticky-bar"><span><b>Total marks: <span id="total">0</span></b> <span class="muted">(calculated live; also checked on the server)</span></span><button type="submit">Generate Paper</button></div></form></div>
 <script>
 const cls=document.getElementById('cls'), subj=document.getElementById('subj');
 cls.onchange=async()=>{ subj.innerHTML='<option value="">— Select subject —</option>';
@@ -58,7 +60,7 @@ subj.onchange=async()=>{ const box=document.getElementById('chapters'); box.inne
   const r=await fetch('/api/chapters/'+subj.value); const d=await r.json();
   CHAPTERS=d;
   d.forEach(c=>{ const l=document.createElement('label'); l.style.display='block'; l.innerHTML='<input type="checkbox" name="chapter_ids" value="'+c.id+'"> Ch '+c.number+': '+c.name; box.appendChild(l); }); 
-  syncQtyGrid(); refreshSectionFormats(); refreshSectionChapters(); };
+  syncQtyGrid(); refreshSectionFormats(); refreshSectionChapters(); refreshCounts(); };
 // English/Urdu papers have no Long or Numerical questions: hide those cards
 // (and clear them, so nothing is submitted for them).
 function syncQtyGrid(){
@@ -72,14 +74,53 @@ function syncQtyGrid(){
   });
   total();
 }
-document.getElementById('scope').onchange=e=>{ document.getElementById('chapbox').style.display=(e.target.value==='full'||e.target.value==='half')?'none':'block'; };
+document.getElementById('scope').onchange=e=>{ document.getElementById('chapbox').style.display=(e.target.value==='full'||e.target.value==='half')?'none':'block'; scopeHint(); refreshCounts(); };
+function scopeHint(){
+  const v=document.getElementById('scope').value;
+  document.getElementById('scope-hint').textContent =
+    v==='full' ? 'Full book uses all chapters — no ticking needed.' :
+    v==='half' ? 'Half book uses the first half of the chapters.' :
+    'Tick the chapters below — unticked chapters are not used.';
+}
+function tickChapters(on){ document.querySelectorAll('#chapters input[type=checkbox]').forEach(cb=>{ cb.checked=on; }); refreshCounts(); }
+document.getElementById('chapters').addEventListener('change', refreshCounts);
+// How many questions the bank actually holds, so the teacher sees
+// "Available: N" next to every quantity before submitting.
+let BANK_COUNTS = null;
+async function refreshCounts(){
+  if(!subj.value){ BANK_COUNTS=null; document.querySelectorAll('.avail').forEach(s=>s.textContent=''); return; }
+  const chs = [...document.querySelectorAll('#chapters input:checked')].map(x=>x.value);
+  const scope = document.getElementById('scope').value;
+  const q = (scope==='one'||scope==='multiple'||scope==='custom') && chs.length ? '?chapters='+chs.join(',') : '';
+  const r = await fetch('/api/counts/'+subj.value+q);
+  BANK_COUNTS = await r.json();
+  const TMAP = {mcq:'MCQ', short:'Short', long:'Long', num:'Numerical'};
+  document.querySelectorAll('.avail[data-avail]').forEach(s=>{
+    const m = s.dataset.avail.match(/^(mcq|short|long|num)_(theory|exercise)$/);
+    if(!m) return;
+    const n = ((BANK_COUNTS.by_type[TMAP[m[1]]]||{})[m[2]==='theory'?'Theory':'Exercise'])||0;
+    s.textContent = 'Available: ' + n;
+  });
+  document.querySelectorAll('[data-sec]').forEach(syncSectionAvail);
+}
+function syncSectionAvail(block){
+  const el = block.querySelector('.sec-avail'); if(!el || !BANK_COUNTS) return;
+  const fmt = block.querySelector('.sec-format').value;
+  const qt = block.querySelector('.sec-qtype').value;
+  let n = 0;
+  if(fmt && fmt!=='Any') n = BANK_COUNTS.by_format[fmt]||0;
+  else { const b = BANK_COUNTS.by_type[qt]||{}; n = (b.Theory||0)+(b.Exercise||0); }
+  el.textContent = 'Bank has ' + n + ' of these';
+}
 function total(){ let t=0;
   document.querySelectorAll('.qty-grid .card').forEach(card=>{
     const marks=+card.querySelector('.mpq').value||0;
     let qty=0; card.querySelectorAll('.qty').forEach(i=>qty+=(+i.value||0));
     const att=card.querySelector('.attempt');
     let n=qty; if(att && +att.value>0) n=Math.min(+att.value, qty);
-    t+=n*marks; });
+    t+=n*marks;
+    const ct=card.querySelector('[data-card-total]');
+    if(ct) ct.textContent = qty ? '· ' + (n*marks) + ' marks' : ''; });
   document.querySelectorAll('[data-sec]').forEach(card=>{
     const parts = card.querySelector('.sec-parts').checked;
     if(parts){
@@ -146,6 +187,7 @@ function syncSection(block){
   const chk = block.querySelector('.sec-choice');
   block.querySelector('.sec-attempt-wrap').style.display = chk.checked ? 'inline' : 'none';
   total();
+  syncSectionAvail(block);
   if(writing) loadTopics(block);
 }
 async function loadTopics(block){
@@ -217,7 +259,7 @@ function addSection(p){
   const typeOpts = ['MCQ','Short','Long','Numerical'].map(t=>'<option'+(p.qtype===t?' selected':'')+'>'+t+'</option>').join('');
   const partTypeOpts = s=>['MCQ','Short','Long','Numerical'].map(t=>'<option'+(s===t?' selected':'')+'>'+t+'</option>').join('');
   d.innerHTML = '<h3>Section</h3>'
-    + '<label>What to add? <select class="sec-format" name="sec_format_'+i+'">'+fmtOptions(p.format||'Any')+'</select></label>'
+    + '<label>What to add? <select class="sec-format" name="sec_format_'+i+'">'+fmtOptions(p.format||'Any')+'</select> <span class="avail sec-avail"></span></label>'
     + '<label>Section title: <input class="sec-title" name="sec_title_'+i+'" value="'+esc(p.title)+'" placeholder="e.g. Essay"></label>'
     + '<label>Section instructions (optional): <input name="sec_note_'+i+'" value="'+esc(p.note||'')+'" placeholder="e.g. Write an essay on any ONE of the following topics"></label>'
     + '<div class="sec-topics" hidden><label>Choose topics (optional): <span class="muted">tick the ones you want — leave all unticked and the app picks any itself</span></label><div class="sec-topics-list"><span class="muted">Select a subject first.</span></div></div>'

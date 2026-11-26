@@ -3,6 +3,8 @@
 <div class="card"><form method="get" class="row">
 <div><label>Search title</label><input name="q" value="{{ sel.q }}"></div>
 <div><label>Class</label><select name="class_level_id"><option value="">All</option>{% for c in classes %}<option value="{{ c.id }}" {{ 'selected' if sel.cid==c.id }}>{{ c.name }}</option>{% endfor %}</select></div>
+<div><label>Subject</label><select name="subject_id"><option value="">All</option>{% for s in subjects %}<option value="{{ s.id }}" {{ 'selected' if sel.sid==s.id }}>{{ s.class_level.name }} · {{ s.name }}</option>{% endfor %}</select></div>
+{% if current_user.is_admin %}<div><label>Teacher</label><select name="teacher_id"><option value="">All</option>{% for t in teachers %}<option value="{{ t.id }}" {{ 'selected' if sel.tid==t.id }}>{{ t.name }}</option>{% endfor %}</select></div>{% endif %}
 <div><label>Date</label><input type="date" name="date" value="{{ sel.d }}"></div>
 <div><label>&nbsp;</label><button type="submit">Filter</button></div></form></div>
 <div class="card"><table><tr><th>Title</th><th>Class / Subject</th><th>Variant</th><th>Marks</th><th>Date</th>{% if current_user.is_admin %}<th>Teacher</th>{% endif %}<th>Actions</th></tr>
