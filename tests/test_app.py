@@ -700,6 +700,7 @@ def test_api_counts():
         cl = appmod.ClassLevel.query.filter_by(name="Class 9th").first()
         subj = appmod.Subject.query.filter_by(name="English", class_level_id=cl.id).first()
         ch1 = appmod.Chapter.query.filter_by(subject_id=subj.id, number=1).first()
+        ch2 = appmod.Chapter.query.filter_by(subject_id=subj.id, number=2).first()
     r = c.get(f"/api/counts/{subj.id}")
     d = r.get_json()
     assert d["by_type"]["MCQ"] == {"Theory": 2, "Exercise": 1}
@@ -709,6 +710,33 @@ def test_api_counts():
     d = r.get_json()
     assert d["by_type"]["MCQ"] == {"Theory": 1}
     assert d["by_type"]["Short"] == {"Theory": 1}
+    # Comma-separated chapters narrow too (the JS sends ?chapters=1,2).
+    r = c.get(f"/api/counts/{subj.id}?chapters={ch1.id},{ch2.id}")
+    d = r.get_json()
+    assert d["by_type"]["MCQ"] == {"Theory": 1}
+    assert d["by_type"]["Short"] == {"Theory": 2}
+    # No chapters ticked means zero available, not the full book.
+    r = c.get(f"/api/counts/{subj.id}?chapters=")
+    assert r.get_json() == {"by_type": {}, "by_format": {}}
+
+
+def test_generator_shortfall_renders_subject_in_html():
+    """The subject (and chapters) are server-rendered in the shortfall page,
+    so the form is correct before any JS fetch runs — a slow network can no
+    longer make it look reset."""
+    c = make_client()
+    login(c, "teacher@test.com", "TeachPass123")
+    with appmod.app.app_context():
+        cl = appmod.ClassLevel.query.filter_by(name="Class 9th").first()
+        subj = appmod.Subject.query.filter_by(name="English", class_level_id=cl.id).first()
+    data = _gen_data(cl.id, subj.id, mcq_theory=2, short_theory=2,
+                     sec_title_0="Essay", sec_qtype_0="Long", sec_format_0="Essay",
+                     sec_qty_0=1, sec_marks_0=10)
+    r = c.post("/generator", data=data)
+    assert r.status_code == 200
+    assert f'<option value="{subj.id}" selected>English</option>'.encode() in r.data
+    assert r.data.count(b'name="chapter_ids"') >= 9
+    assert b'"subject_list"' in r.data and b'"chapter_list"' in r.data
 
 
 def test_generator_shortfall_shows_anyway_totals():

@@ -17,7 +17,7 @@
 </div>
 <div class="row">
 <div><label>Class</label><select name="class_level_id" id="cls" required><option value="">— Select class —</option>{% for c in classes %}<option value="{{ c.id }}"{{ ' selected' if form_data and form_data.get('class_level_id') == c.id|string }}>{{ c.name }}</option>{% endfor %}</select></div>
-<div><label>Subject</label><select name="subject_id" id="subj" required><option value="">— Select subject first —</option></select></div>
+<div><label>Subject</label><select name="subject_id" id="subj" required><option value="">— Select subject first —</option>{% for s in preset.subject_list %}<option value="{{ s.id }}"{{ ' selected' if preset.subject|string == s.id|string }}>{{ s.name }}</option>{% endfor %}</select></div>
 <div><label>Difficulty</label><select name="difficulty">{% for d in ['Mixed','Easy','Medium','Hard'] %}<option{{ ' selected' if (form_data.difficulty if form_data else 'Mixed') == d }}>{{ d }}</option>{% endfor %}</select></div>
 </div>
 <label>Chapter scope</label>
@@ -30,7 +30,7 @@
 <p class="muted" id="scope-hint">Full book uses all chapters — no ticking needed.</p>
 <div id="chapbox" style="display:none"><label>Choose chapter(s)</label>
 <p><button type="button" class="btn btn-light" onclick="tickChapters(true)">Select all</button> <button type="button" class="btn btn-light" onclick="tickChapters(false)">Clear</button> <span class="muted">Tick at least one chapter — unticked boxes are not used.</span></p>
-<div id="chapters"></div></div>
+<div id="chapters">{% for c in preset.chapter_list %}<label style="display:block"><input type="checkbox" name="chapter_ids" value="{{ c.id }}"{{ ' checked' if not preset.chapters or c.id|string in preset.chapters }}> Ch {{ c.number }}: {{ c.name }}</label>{% endfor %}</div></div>
 <h2>Quantities — Theory and Exercise are separate</h2>
 <p class="muted">For each type, say how many questions from <b>Theory</b> and how many from <b>Exercise</b>. Marks per question are set below each type. Board papers usually use MCQ 1 mark, Short 2, Long 5, Numerical 4 and Essay 10 — change any of these if your paper needs different marks. The green "Available" number is how many questions the bank actually holds for that type.</p>
 <div class="qty-grid">
@@ -91,7 +91,9 @@ async function refreshCounts(){
   if(!subj.value){ BANK_COUNTS=null; document.querySelectorAll('.avail').forEach(s=>s.textContent=''); return; }
   const chs = [...document.querySelectorAll('#chapters input:checked')].map(x=>x.value);
   const scope = document.getElementById('scope').value;
-  const q = (scope==='one'||scope==='multiple'||scope==='custom') && chs.length ? '?chapters='+chs.join(',') : '';
+  // For a custom chapter scope always send the ticked chapters — even none,
+  // so the counts read 0 instead of silently falling back to the full book.
+  const q = (scope==='one'||scope==='multiple'||scope==='custom') ? '?chapters='+chs.join(',') : '';
   const r = await fetch('/api/counts/'+subj.value+q);
   BANK_COUNTS = await r.json();
   const TMAP = {mcq:'MCQ', short:'Short', long:'Long', num:'Numerical'};
@@ -302,10 +304,21 @@ const PRESET = {{ preset|tojson }};
 (async function restorePreset(){
   if(!PRESET || !PRESET.class){ total(); return; }
   cls.value = PRESET.class;
-  await cls.onchange();  // loads the subjects for this class
+  // The server already rendered the subject options and chapter boxes for
+  // the failed submission, so the form is correct before any fetch runs —
+  // only fetch when the server did not render them (e.g. a subject added
+  // since, or a stale preset).
+  if(PRESET.subject && ![...subj.options].some(o=>o.value===String(PRESET.subject))){
+    await cls.onchange();  // loads the subjects for this class
+  }
   if(PRESET.subject){
     subj.value = PRESET.subject;
-    await subj.onchange();  // loads the chapters for this subject
+    if(!document.querySelectorAll('#chapters input[type=checkbox]').length){
+      await subj.onchange();  // loads the chapters for this subject
+    } else {
+      if(PRESET.chapter_list) CHAPTERS = PRESET.chapter_list;
+      syncQtyGrid(); refreshSectionFormats(); refreshSectionChapters(); refreshCounts();
+    }
     if(PRESET.chapters && PRESET.chapters.length){
       document.querySelectorAll('#chapters input[type=checkbox]').forEach(cb=>{
         cb.checked = PRESET.chapters.map(String).includes(cb.value); });

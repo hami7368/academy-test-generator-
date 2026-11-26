@@ -1179,11 +1179,20 @@ def api_counts(sid):
     by format — so the generator can show 'Available: N' before the teacher
     submits. Optional ?chapters=1,2,3 narrows it to those chapters."""
     from sqlalchemy import func
-    ch = [int(x) for x in request.args.getlist("chapters") if str(x).isdigit()]
+    # Accept both ?chapters=1&chapters=2 and ?chapters=1,2. When the param
+    # is present at all — even empty, meaning "no chapters ticked" — narrow
+    # to exactly those chapters, so the counts read 0 instead of full-book.
+    raw = request.args.getlist("chapters")
+    ch = []
+    for v in raw:
+        for x in str(v).split(","):
+            x = x.strip()
+            if x.isdigit():
+                ch.append(int(x))
     base = (db.session.query(Question.qtype, Question.source, Question.format,
                              func.count())
             .filter_by(subject_id=sid))
-    if ch:
+    if "chapters" in request.args:
         base = base.filter(Question.chapter_id.in_(ch))
     by_type, by_format = {}, {}
     for qt, src, fmt, n in base.group_by(Question.qtype, Question.source,
@@ -1281,7 +1290,17 @@ def generator():
         preset = {"class": request.form.get("class_level_id") or "",
                   "subject": request.form.get("subject_id") or "",
                   "chapters": request.form.getlist("chapter_ids"),
-                  "scope": scope}
+                  "scope": scope,
+                  # Server-rendered options, so the form is already correct
+                  # in the first HTML — no waiting on a fetch to see the
+                  # subject the teacher picked.
+                  "subject_list": [{"id": s.id, "name": s.name} for s in
+                                   Subject.query.filter_by(class_level_id=cid)
+                                   .order_by(Subject.name).all()] if cid else [],
+                  "chapter_list": [{"id": ch.id, "number": ch.number, "name": ch.name}
+                                   for ch in
+                                   Chapter.query.filter_by(subject_id=sid)
+                                   .order_by(Chapter.number).all()] if sid else []}
         if not (cid and sid):
             flash("Select a class and a subject.", "error")
             return render_template("generator.html", classes=classes,
@@ -1516,7 +1535,8 @@ def generator():
         return redirect(url_for("paper_view", pid=paper.id))
     return render_template("generator.html", classes=classes, formats=FORMATS, format_groups=FORMAT_GROUPS,
                            preset_sections=[], preset={"class": "", "subject": "",
-                                                      "chapters": [], "scope": "full"},
+                                                      "chapters": [], "scope": "full",
+                                                      "subject_list": [], "chapter_list": []},
                            today=date.today().isoformat())
 
 

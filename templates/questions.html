@@ -2,7 +2,7 @@
 <h1>Question Bank</h1>
 {% if current_user.is_admin %}<p><a class="btn" href="/questions/new">+ Add Question</a> <a class="btn btn-secondary" href="/admin/questions/import">⬆ Import from Excel</a></p>{% endif %}
 <div class="card"><h2>Bank at a glance</h2>
-<p class="muted">How many questions each class and subject holds — click one to see its questions.</p>
+<p class="muted">How many questions each class and subject holds — click one to see its questions and its formats (e.g. how many Essay questions it has).</p>
 <p>{% for b in bank_counts %}<a class="btn btn-light" href="/questions?class_level_id={{ b.cid }}&subject_id={{ b.sid }}">{{ b.class }} · {{ b.subject }} — {{ b.total }} ({% for t, n in b.types.items() %}{{ t }} {{ n }}{% if not loop.last %}, {% endif %}{% endfor %})</a> {% endfor %}</p>
 {% if fmt_breakdown %}
 <p><b>{{ fmt_breakdown.class }} · {{ fmt_breakdown.subject }} formats:</b> {% for f, n in fmt_breakdown['items'] %}{{ f }} {{ n }}{% if not loop.last %}, {% endif %}{% endfor %}</p>
