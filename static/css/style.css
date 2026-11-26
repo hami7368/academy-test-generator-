@@ -1,35 +1,40 @@
-*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;background:#f1f5f4;color:#1f2937;line-height:1.5}
-.topbar{background:#0f766e;color:#fff;padding:.7rem 1rem;display:flex;flex-wrap:wrap;gap:.5rem 1rem;align-items:center;justify-content:space-between}
-.brand{color:#fff;font-weight:700;text-decoration:none;font-size:1.1rem}
+/* Theme 3 — Soft Classroom (picked by Hamid, 2026-11-26):
+   warm cream page, teal header and buttons, amber accents, big rounded
+   cards and buttons, generous spacing — the simplest to read at a glance. */
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;background:#fdf6e9;color:#292524;line-height:1.6;font-size:17px}
+.topbar{background:#0f766e;color:#fff;padding:.8rem 1.2rem;display:flex;flex-wrap:wrap;gap:.5rem 1rem;align-items:center;justify-content:space-between;margin:.6rem;border-radius:16px;box-shadow:0 4px 14px rgba(15,118,110,.25)}
+.brand{color:#fff;font-weight:800;text-decoration:none;font-size:1.25rem}
 .topbar nav{display:flex;flex-wrap:wrap;gap:.2rem}
-.topbar nav a{color:#ccfbf1;text-decoration:none;padding:.35rem .6rem;border-radius:6px;font-size:.92rem}
+.topbar nav a{color:#ccfbf1;text-decoration:none;padding:.4rem .7rem;border-radius:8px;font-size:.95rem}
 .topbar nav a:hover{background:#115e59;color:#fff}
-.container{max-width:1024px;margin:0 auto;padding:1rem}
-.card{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:1rem 1.2rem;margin-bottom:1rem;box-shadow:0 1px 3px rgba(0,0,0,.05)}
-h1{font-size:1.5rem;margin:.2rem 0 .8rem}h2{font-size:1.2rem;margin:.5rem 0}h3{font-size:1.05rem}
-label{display:block;font-weight:600;margin:.6rem 0 .25rem}
-input,select,textarea{width:100%;padding:.55rem .7rem;border:1px solid #cbd5e1;border-radius:8px;font-size:1rem;background:#fff}
-input[type=checkbox]{width:auto}
+.container{max-width:1080px;margin:0 auto;padding:1.25rem}
+.card{background:#fff;border:1px solid #f0e6cc;border-radius:16px;padding:1.25rem 1.4rem;margin-bottom:1.25rem;box-shadow:0 2px 10px rgba(120,90,20,.06)}
+h1{font-size:1.7rem;margin:.2rem 0 .9rem;color:#292524}h2{font-size:1.3rem;margin:.5rem 0;border-left:5px solid #f59e0b;padding-left:.6rem}h3{font-size:1.1rem}
+label{display:block;font-weight:700;margin:.7rem 0 .3rem;color:#44403c}
+input,select,textarea{width:100%;padding:.65rem .8rem;border:1.5px solid #d6cdb4;border-radius:12px;font-size:1.05rem;background:#fffdf7}
+input:focus,select:focus,textarea:focus{outline:none;border-color:#0f766e;box-shadow:0 0 0 3px rgba(15,118,110,.15)}
+input[type=checkbox]{width:auto;accent-color:#0f766e;min-width:1.1rem;min-height:1.1rem}
 textarea{min-height:80px}
-button,.btn{display:inline-block;background:#0f766e;color:#fff;border:none;padding:.55rem 1rem;border-radius:8px;cursor:pointer;font-size:1rem;text-decoration:none;margin:.25rem .2rem 0 0}
-.btn-secondary{background:#475569}.btn-danger{background:#b91c1c}.btn-light{background:#e2e8f0;color:#1f2937}
-button:hover,.btn:hover{opacity:.9}
+button,.btn{display:inline-block;background:#0f766e;color:#fff;border:none;padding:.7rem 1.3rem;border-radius:12px;cursor:pointer;font-size:1.05rem;font-weight:700;text-decoration:none;margin:.25rem .2rem 0 0}
+.btn-secondary{background:#57534e}.btn-danger{background:#b91c1c}.btn-light{background:#f1ead8;color:#44403c}
+button:hover,.btn:hover{opacity:.92}
 table{width:100%;border-collapse:collapse;font-size:.95rem}
-th,td{border-bottom:1px solid #e2e8f0;padding:.5rem .4rem;text-align:left;vertical-align:top}
-th{background:#f8fafc}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.8rem}
-.stat{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:1rem;text-align:center}
+th,td{border-bottom:1px solid #f0e6cc;padding:.55rem .4rem;text-align:left;vertical-align:top}
+th{background:#fffbeb}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.9rem}
+.stat{background:#fff;border:1px solid #f0e6cc;border-radius:16px;padding:1rem;text-align:center}
 .stat b{font-size:1.7rem;color:#0f766e;display:block}
-.flash{padding:.7rem 1rem;border-radius:8px;margin-bottom:1rem}
+.flash{padding:.8rem 1.1rem;border-radius:12px;margin-bottom:1rem}
 .flash-success{background:#dcfce7}.flash-error{background:#fee2e2}.flash-warning{background:#fef3c7}.flash-info{background:#dbeafe}
-.qbox{border:1px solid #e2e8f0;border-radius:8px;padding:.7rem;margin:.5rem 0;background:#f8fafc}
-.muted{color:#64748b;font-size:.9rem}
-.row{display:flex;flex-wrap:wrap;gap:1rem}.row>div{flex:1;min-width:140px}
-.qty-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:.8rem}
+.qbox{border:1px solid #fde68a;border-radius:12px;padding:.8rem;margin:.6rem 0;background:#fffbeb}
+.muted{color:#78716c;font-size:.92rem}
+.row{display:flex;flex-wrap:wrap;gap:1.25rem}.row>div{flex:1;min-width:140px}
+.qty-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:1rem}
 .qty-grid .card{margin-bottom:0}
-.qty-grid input{width:90px;display:inline-block}
-@media(max-width:600px){.container{padding:.6rem}h1{font-size:1.25rem}table{font-size:.85rem}.topbar nav a{padding:.3rem .4rem}}
-@media print{.topbar,.footer,.no-print{display:none!important}.container{max-width:100%}}
-.footer{text-align:center;color:#64748b;font-size:.85rem;padding:1rem}
-.sticky-bar{position:sticky;bottom:0;background:#fff;border-top:2px solid #0f766e;padding:.7rem 1rem;display:flex;flex-wrap:wrap;gap:.5rem 1rem;align-items:center;justify-content:space-between;z-index:10;box-shadow:0 -2px 8px rgba(0,0,0,.08)}
-.avail{color:#0f766e;font-size:.85rem;font-weight:600}
+.qty-grid input{width:100px;display:inline-block}
+@media(max-width:600px){.container{padding:.7rem}h1{font-size:1.4rem}table{font-size:.85rem}.topbar nav a{padding:.35rem .45rem}.topbar{margin:.4rem}}
+@media print{.topbar,.footer,.no-print{display:none!important}.container{max-width:100%}body{background:#fff;font-size:14px}.card{box-shadow:none}}
+.footer{text-align:center;color:#78716c;font-size:.85rem;padding:1rem}
+.sticky-bar{position:sticky;bottom:0;background:#fff;border-top:3px solid #0f766e;border-radius:16px 16px 0 0;padding:.9rem 1.2rem;display:flex;flex-wrap:wrap;gap:.5rem 1rem;align-items:center;justify-content:space-between;z-index:10;box-shadow:0 -4px 14px rgba(120,90,20,.12)}
+.sticky-bar b{font-size:1.15rem}
+.avail{display:inline-block;background:#dcfce7;color:#15803d;font-size:.85rem;font-weight:700;padding:.1rem .55rem;border-radius:999px}
